@@ -1,56 +1,55 @@
-# Welcome to your Expo app 👋
+# Kasa — Şifreli Özel Medya & Not Kasası
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+PIN korumalı, **tamamen offline** bir kişisel kasa uygulaması (iOS + Android, Expo / React Native).
 
-## Get started
+- 📷 Uygulama içi kameradan fotoğraf ve video çekilir; **cihaz galerisine asla düşmez**.
+- 🔐 Tüm içerik (medya + notlar) cihazda **AES-256-GCM** ile şifreli saklanır (encrypted at rest).
+- 📝 Notlar başlıklarıyla birlikte alan bazında şifrelenir.
+- 📵 Sunucu, hesap, analitik, internet erişimi yok. Veri yalnızca bu cihazda yaşar.
 
-1. Install dependencies
+## ⚠️ Kurtarma yoktur
 
-   ```bash
-   npm install
-   ```
+PIN unutulursa veriler **kalıcı olarak kurtarılamaz**. "Şifremi unuttum" akışı, yedek anahtar
+veya bulut kopyası bilinçli olarak yoktur; anahtar hiyerarşisi buna göre tasarlanmıştır
+(bkz. [docs/SECURITY.md](docs/SECURITY.md)). Ayrıca cihaz yedeğinden geri yükleme de kasayı
+geri getirmez: anahtarın bir parçası (pepper) yalnızca cihazın Keychain/Keystore'unda yaşar
+ve yedeklere taşınmaz.
 
-2. Start the app
+## Geliştirme
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Native kripto modülü (react-native-quick-crypto) kullanıldığı için **Expo Go çalışmaz**;
+dev-client / prebuild gerekir.
 
 ```bash
-npm run reset-project
+npm install
+
+# Native projeleri üret (ios/ ve android/)
+npx expo prebuild
+
+# Çalıştır
+npx expo run:ios        # iOS simülatör / cihaz
+npx expo run:android    # Android emülatör / cihaz
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### Komutlar
 
-### Other setup steps
+| Komut | Açıklama |
+|---|---|
+| `npm test` | Jest birim testleri (kripto çekirdeği: round-trip, tamper, backoff) |
+| `npm run typecheck` | TypeScript kontrolü (`tsc --noEmit`) |
+| `npm run lint` | ESLint |
+| `npm run prebuild` | Native projeleri yeniden üret |
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+## Dokümantasyon
 
-## Learn more
+| Doküman | İçerik |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modül haritası, medya hattı, kilit durum makinesi, rota haritası |
+| [docs/SECURITY.md](docs/SECURITY.md) | Tehdit modeli, anahtar hiyerarşisi, `.enc` format speci, dürüst sınırlar |
+| [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | SQLite şeması, dosya formatı bayt düzeni, dizin yapısı, SecureStore envanteri |
+| [CLAUDE.md](CLAUDE.md) | Repo kuralları ve değişmezler (invariants) |
 
-To learn more about developing your project with Expo, look at the following resources:
+## Teknoloji
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Expo SDK 57 · TypeScript (strict) · Expo Router · expo-camera · expo-video · expo-sqlite ·
+expo-secure-store · expo-file-system (FileHandle stream I/O) · react-native-quick-crypto (JSI) · zustand

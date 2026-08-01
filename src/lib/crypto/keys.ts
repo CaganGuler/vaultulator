@@ -218,7 +218,12 @@ function openSlot(kek: Uint8Array, slot: Uint8Array, expectedRole: VaultRole): U
   if (payload.length !== SLOT_PAYLOAD_LEN) throw new VaultCorruptError('Slot içeriği bozuk');
   if (payload[0] !== PAYLOAD_VERSION) throw new VaultCorruptError(`Bilinmeyen slot sürümü: ${payload[0]}`);
   if (payload[1] !== ROLE_BYTE[expectedRole]) throw new VaultCorruptError('Slot rolü konumuyla uyuşmuyor');
-  return payload.subarray(2);
+  // slice, not subarray: a view would keep the DEK aliased to this payload, so
+  // zeroizing the session context would leave the version and role bytes (0x03
+  // for duress) sitting next to a zeroed 32-byte hole in a heap dump.
+  const dek = payload.slice(2);
+  zeroize(payload);
+  return dek;
 }
 
 export interface UnlockedSlot {
@@ -321,18 +326,29 @@ export async function createVault(pin: string): Promise<Uint8Array> {
   const dek = randomBytes(KEY_LEN);
   const params = DEFAULT_KDF_PARAMS;
 
-  const kek = await deriveKek(pin, pinSalt, pepper, params);
-  const slots: Uint8Array[] = [];
-  for (let i = 0; i < SLOT_COUNT; i++) {
-    slots.push(i === SLOT_PRIMARY ? sealSlot(kek, 'primary', dek) : randomBytes(SLOT_LEN));
-  }
-  zeroize(kek);
+  try {
+    const kek = await deriveKek(pin, pinSalt, pepper, params);
+    const slots: Uint8Array[] = [];
+    try {
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        slots.push(i === SLOT_PRIMARY ? sealSlot(kek, 'primary', dek) : randomBytes(SLOT_LEN));
+      }
+    } finally {
+      zeroize(kek);
+    }
 
-  await SecureStore.setItemAsync(KEY_PEPPER, base64Encode(pepper), SECURE_OPTS);
-  await SecureStore.setItemAsync(KEY_KDF_PARAMS, JSON.stringify(params), SECURE_OPTS);
-  await saveRecord({ pinSalt, slots, escrow: randomBytes(ESCROW_LEN) });
-  await SecureStore.setItemAsync(KEY_ATTEMPTS, JSON.stringify({ count: 0, lockUntil: 0 }), SECURE_OPTS);
-  zeroize(pepper);
+    // Record last: a crash before it leaves a pepper with nothing to unlock,
+    // which vaultExists() reports as "no vault" and onboarding can retry.
+    await SecureStore.setItemAsync(KEY_PEPPER, base64Encode(pepper), SECURE_OPTS);
+    await SecureStore.setItemAsync(KEY_KDF_PARAMS, JSON.stringify(params), SECURE_OPTS);
+    await SecureStore.setItemAsync(KEY_ATTEMPTS, JSON.stringify({ count: 0, lockUntil: 0 }), SECURE_OPTS);
+    await saveRecord({ pinSalt, slots, escrow: randomBytes(ESCROW_LEN) });
+  } catch (e) {
+    zeroize(dek);
+    throw e;
+  } finally {
+    zeroize(pepper);
+  }
   return dek;
 }
 
@@ -720,7 +736,7 @@ export const ROW_TAG_LEN = 16;
  * exists. Every row's tag is unique and unlinkable without the tag key.
  */
 export function rowTag(tagKey: Uint8Array, rowId: string): Uint8Array {
-  return hmacSha256(tagKey, utf8Encode(rowId)).subarray(0, ROW_TAG_LEN);
+  return hmacSha256(tagKey, utf8Encode(rowId)).slice(0, ROW_TAG_LEN);
 }
 
 // ── Failed-attempt backoff ──────────────────────────────────────────────────

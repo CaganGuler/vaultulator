@@ -24,6 +24,7 @@ import {
   resetDecoyPin,
   verifyPinForRole,
 } from '@/lib/crypto/keys';
+import { zeroize } from '@/lib/crypto/primitives';
 import { requireCtx, useIsPrimary } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
@@ -109,9 +110,15 @@ export default function DecoyScreen() {
 
   const commit = async (value: string) => {
     const { dek } = requireCtx();
-    if (flow === 'create') await enableDecoy(dek, value);
-    else if (flow === 'reset') await resetDecoyPin(dek, value);
-    else if (flow === 'duress') await enableDuress(dek, value);
+    if (flow === 'create') {
+      // enableDecoy hands back the plaintext decoy DEK; this session has no use
+      // for it, so wipe it rather than leave a live key in the heap.
+      zeroize(await enableDecoy(dek, value));
+    } else if (flow === 'reset') {
+      await resetDecoyPin(dek, value);
+    } else if (flow === 'duress') {
+      await enableDuress(dek, value);
+    }
   };
 
   const handlePinChange = (value: string) => {
@@ -160,7 +167,7 @@ export default function DecoyScreen() {
     void commit(value)
       .then(async () => {
         await refresh();
-        backToMenu();
+        backToMenu(); // also clears authPin / firstPin from state
         Alert.alert('Tamam', flow === 'duress' ? 'Panik PIN’i kuruldu.' : 'Yem kasa hazır.');
       })
       .catch((e: unknown) => {

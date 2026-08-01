@@ -29,6 +29,7 @@ import {
   SLOT_PRIMARY,
   unlockVault,
   VaultCorruptError,
+  vaultExists,
   verifyPinForRole,
   WrongPinError,
 } from '../keys';
@@ -525,6 +526,57 @@ describe('legacy single-slot migration', () => {
     const decoyDek = await enableDecoy(primaryDek, DECOY_PIN);
     expect(b((await unlockVault(DECOY_PIN)).dek)).toEqual(b(decoyDek));
     expect(b((await unlockVault(PRIMARY_PIN)).dek)).toEqual(b(primaryDek));
+  });
+});
+
+describe('key material is not aliased to a larger buffer', () => {
+  /**
+   * These read like pedantry but both were real. A Uint8Array view keeps the
+   * whole backing buffer alive, so zeroizing the view clears only part of it —
+   * and anything that binds by `.buffer` sees the wrong bytes entirely.
+   */
+  it('returns a standalone DEK, not a window into the slot payload', async () => {
+    const dek = (await unlockVault(PRIMARY_PIN).catch(() => null)) ?? null;
+    expect(dek).toBeNull(); // no vault yet
+
+    await createVault(PRIMARY_PIN);
+    const opened = await unlockVault(PRIMARY_PIN);
+
+    expect(opened.dek).toHaveLength(32);
+    expect(opened.dek.byteOffset).toBe(0);
+    // A view of the 34-byte payload would report a 34-byte backing buffer and
+    // leave the version and role bytes (0x03 for duress) behind after zeroize.
+    expect(opened.dek.buffer.byteLength).toBe(32);
+  });
+
+  it('returns a standalone row tag, not a window into the 32-byte HMAC', async () => {
+    const dek = await createVault(PRIMARY_PIN);
+    const tag = rowTag(deriveTagKey(dek), 'some-row-id');
+
+    expect(tag).toHaveLength(ROW_TAG_LEN);
+    expect(tag.byteOffset).toBe(0);
+    // A driver binding this BLOB by `.buffer` would otherwise store 32 bytes,
+    // the ownership check would never match, and the vault would go invisible.
+    expect(tag.buffer.byteLength).toBe(ROW_TAG_LEN);
+  });
+});
+
+describe('createVault leaves nothing half-built', () => {
+  it('reports no vault when the record write fails', async () => {
+    // Keep the real function reference: requireActual would hand back a second
+    // copy of the mock module with its own empty store.
+    const real = SecureStore.setItemAsync;
+    const setItem = jest.spyOn(SecureStore, 'setItemAsync').mockImplementation(async (key, value) => {
+      if (key === RECORD_KEY) throw new Error('secure store full');
+      return real(key, value);
+    });
+
+    await expect(createVault(PRIMARY_PIN)).rejects.toThrow('secure store full');
+    setItem.mockRestore();
+
+    // The pepper landed but the record did not, so onboarding can start over
+    // rather than the app believing a vault exists that no PIN can open.
+    expect(await vaultExists()).toBe(false);
   });
 });
 

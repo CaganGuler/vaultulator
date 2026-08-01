@@ -49,6 +49,20 @@ export interface Argon2idParams {
 /**
  * Argon2id with a keyed `secret` (the device pepper). Runs off the JS thread.
  */
+/**
+ * Copies `source` and wipes the original.
+ *
+ * The native layer hands back a buffer we do not own and cannot track. Once
+ * the value is copied into a buffer the caller can zeroize, the native one is
+ * dead weight holding key material, so clear it here rather than leave a
+ * second copy of a KEK or subkey lying in the heap.
+ */
+function takeAndWipe(source: Uint8Array): Uint8Array {
+  const copy = Uint8Array.from(source);
+  source.fill(0);
+  return copy;
+}
+
 export function argon2id(
   password: Uint8Array,
   salt: Uint8Array,
@@ -69,20 +83,20 @@ export function argon2id(
       },
       (err, result) => {
         if (err || !result) reject(err ?? new Error('argon2 sonuç üretmedi'));
-        else resolve(Uint8Array.from(toU8(result)));
+        else resolve(takeAndWipe(toU8(result)));
       },
     );
   });
 }
 
 export function hkdf256(ikm: Uint8Array, salt: Uint8Array, info: string, length: number): Uint8Array {
-  return Uint8Array.from(toU8(QuickCrypto.hkdfSync('sha256', ikm, salt, info, length)));
+  return takeAndWipe(toU8(QuickCrypto.hkdfSync('sha256', ikm, salt, info, length)));
 }
 
 export function hmacSha256(key: Uint8Array, data: Uint8Array): Uint8Array {
   const mac = QuickCrypto.createHmac('sha256', key as never);
   mac.update(data as never);
-  return Uint8Array.from(toU8(mac.digest() as unknown as Uint8Array));
+  return takeAndWipe(toU8(mac.digest() as unknown as Uint8Array));
 }
 
 /** Length-independent, value-constant-time equality. Both operands are public-length. */
@@ -114,7 +128,14 @@ export function gcmOpen(key: Uint8Array, iv: Uint8Array, sealed: Uint8Array, aad
     decipher.setAuthTag(tag as never);
     const pt = toU8(decipher.update(ct) as unknown as Uint8Array);
     const final = toU8(decipher.final() as unknown as Uint8Array);
-    return concatBytes(pt, final);
+    const out = concatBytes(pt, final);
+    // These fragments held the plaintext — a wrapped DEK, for instance. Without
+    // this, every slot unwrap would leave a second copy of the key in a buffer
+    // nothing else can reach, so zeroizing the session context would not
+    // actually remove it from the heap.
+    pt.fill(0);
+    final.fill(0);
+    return out;
   } catch {
     throw new IntegrityError();
   }

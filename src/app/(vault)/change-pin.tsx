@@ -54,6 +54,9 @@ export default function ChangePinScreen() {
       .changePin(currentPin, value)
       .then((result) => {
         if (result === 'ok') {
+          setPin('');
+          setCurrentPin('');
+          setNewPin('');
           Alert.alert('Tamam', 'PIN değiştirildi.');
           router.back();
           return;

@@ -45,18 +45,32 @@ export function deleteIfExists(uri: string): void {
   }
 }
 
-/** Removes every decrypted temp file. Called on lock and on cold start. */
-export function wipeDecryptedDir(): void {
-  try {
-    if (decryptedDir.exists) decryptedDir.delete();
-  } catch {
-    // fall through and recreate regardless
+/**
+ * Removes every decrypted temp file. Called on lock and on cold start.
+ *
+ * Returns the names of any files that survived. Invariant #2 says plaintext
+ * lives only here and only until lock, so a leftover is a real failure — the
+ * caller must not treat silence as success.
+ */
+export function wipeDecryptedDir(): string[] {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (decryptedDir.exists) decryptedDir.delete();
+    } catch {
+      // fall through, re-check below, retry once
+    }
+    try {
+      decryptedDir.create({ intermediates: true });
+    } catch {
+      // best effort
+    }
+    const left = fileNamesIn(decryptedDir);
+    if (left.length === 0) return [];
+    // Second pass: delete file-by-file in case the directory delete was the
+    // thing that failed (a file held open by the video player, say).
+    for (const name of left) deleteIfExists(new File(decryptedDir, name).uri);
   }
-  try {
-    decryptedDir.create({ intermediates: true });
-  } catch {
-    // best effort
-  }
+  return fileNamesIn(decryptedDir);
 }
 
 function fileNamesIn(dir: Directory): string[] {

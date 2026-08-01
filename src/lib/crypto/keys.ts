@@ -98,6 +98,13 @@ const SECURE_OPTS: SecureStore.SecureStoreOptions = {
 
 // ── Record layout ───────────────────────────────────────────────────────────
 
+/**
+ * PIN length, in digits. The pad renders this many dots and the calculator
+ * treats exactly this many bare digits as an unlock attempt — they must agree
+ * or the front door silently stops working.
+ */
+export const PIN_LENGTH = 6;
+
 export type VaultRole = 'primary' | 'decoy' | 'duress';
 
 export const SLOT_PRIMARY = 0;

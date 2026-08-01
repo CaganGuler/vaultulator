@@ -1,5 +1,6 @@
 import { getDb } from './connection';
 import { ownedRows, owns, tagFor, type TaggedRow, type VaultContext } from './scope';
+import { evictThumb } from '../media/viewer-cache';
 import { deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
 export type MediaType = 'photo' | 'video';
@@ -82,6 +83,7 @@ export async function deleteMediaItem(ctx: VaultContext, item: MediaItem): Promi
   const db = await getDb();
   const result = await db.runAsync('DELETE FROM media_items WHERE id = ? AND vault_tag = ?', item.id, tagFor(ctx, item.id));
   if (result.changes === 0) return;
+  evictThumb(item.id); // otherwise the decrypted thumbnail lingers until lock
   deleteIfExists(mediaFileUri(item.fileName));
   if (item.thumbName) deleteIfExists(thumbFileUri(item.thumbName));
 }
@@ -111,6 +113,7 @@ export async function getVaultStats(ctx: VaultContext): Promise<VaultStats> {
 /** Deletes every row and file belonging to this vault, leaving the other one alone. */
 export async function deleteAllMediaOf(ctx: VaultContext): Promise<void> {
   const owned = await listMediaItems(ctx);
+  for (const item of owned) evictThumb(item.id);
   const db = await getDb();
   await db.withTransactionAsync(async () => {
     for (const item of owned) {

@@ -19,6 +19,11 @@ export function clearThumbCache(): void {
   thumbCache.clear();
 }
 
+/** Drops one item's decrypted thumbnail — call when the item is deleted. */
+export function evictThumb(itemId: string): void {
+  thumbCache.delete(itemId);
+}
+
 export async function getThumbnailDataUri(dek: Uint8Array, item: MediaItem): Promise<string | null> {
   if (!item.thumbName) return null;
   const cached = thumbCache.get(item.id);

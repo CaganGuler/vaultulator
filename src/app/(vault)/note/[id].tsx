@@ -5,8 +5,10 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, Tex
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createNote, deleteNote, getNote, updateNote } from '@/lib/db/notes-repo';
-import { requireCtx } from '@/stores/session';
+import { requireCtx, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
+
+const AUTOSAVE_MS = 1500;
 
 export default function NoteEditor() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -43,6 +45,33 @@ export default function NoteEditor() {
     }
     dirty.current = false;
   };
+
+  // Autosave. Saving used to happen only via the header button, so a back
+  // swipe, the idle lock (typing produces no touch events on the root
+  // responder), a shake or a screenshot all unmounted the editor and threw the
+  // draft away. Keep the latest values in a ref so the unmount save sees them.
+  const latest = useRef({ title, body, noteId });
+  useEffect(() => {
+    latest.current = { title, body, noteId };
+  }, [title, body, noteId]);
+
+  useEffect(() => {
+    if (!dirty.current) return;
+    const timer = setTimeout(() => void save().catch(() => undefined), AUTOSAVE_MS);
+    return () => clearTimeout(timer);
+  }, [title, body]); // eslint-disable-line react-hooks/exhaustive-deps -- save reads refs
+
+  useEffect(
+    () => () => {
+      if (!dirty.current) return;
+      const { title: t, body: bdy, noteId: nid } = latest.current;
+      const ctx = useSession.getState().ctx;
+      if (!ctx) return; // already locked; the draft is gone either way
+      void (nid ? updateNote(ctx, nid, t, bdy) : t.trim() || bdy.trim() ? createNote(ctx, t, bdy) : Promise.resolve())
+        .catch(() => undefined);
+    },
+    [],
+  );
 
   const saveAndClose = () => {
     void save()

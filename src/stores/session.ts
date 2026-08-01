@@ -131,6 +131,16 @@ export const useSession = create<SessionState>((set, get) => ({
       // un-backfilled rows would show the user an empty vault.
       await backfillRowTags(ctx);
 
+      // Sweep ciphertext no row references any more — a crash between
+      // encryptFile and insertMediaItem would otherwise leave it on disk
+      // forever. Primary only: it is the session that can be sure the
+      // remaining rows are the complete picture.
+      if (ctx.role === 'primary') {
+        void listAllReferencedFiles()
+          .then(sweepOrphanFiles)
+          .catch(() => undefined); // housekeeping must never block an unlock
+      }
+
       clearThumbCache(); // a duress unlock arrives without a preceding lock()
       set({ status: 'unlocked', ctx, lockUntil: 0 });
       return { ok: true };

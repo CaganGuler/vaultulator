@@ -3,9 +3,10 @@ import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { PIN_LENGTH } from '../lib/crypto/keys';
 import { colors, radius, spacing } from '../theme';
 
-export const PIN_LENGTH = 6;
+export { PIN_LENGTH };
 
 interface PinPadProps {
   value: string;

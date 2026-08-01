@@ -14,6 +14,8 @@ import * as VideoThumbnails from 'expo-video-thumbnails';
 import { insertMediaItem, type MediaItem } from '../db/media-repo';
 import type { VaultContext } from '../db/scope';
 import { assertStillCurrent } from '../../stores/session';
+import { DEFAULT_CHUNK_SIZE, HEADER_LEN } from '../crypto/format';
+import { GCM_TAG_LEN } from '../crypto/primitives';
 import { encryptFile, type StreamProgress } from '../crypto/stream';
 import { deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
@@ -130,10 +132,20 @@ export async function ingestCapturedVideo(input: IngestVideoInput): Promise<Medi
   }
 }
 
-/** Post-encrypt integrity check before the DB row is committed. */
+/**
+ * Post-encrypt integrity check before the DB row is committed.
+ *
+ * Checks the exact length, not just "non-empty": a short write from a full
+ * disk yields a truncated but plausible-looking file, and committing the row
+ * for it creates an item that can never be decrypted and never be explained.
+ */
 function assertEncryptedExists(item: MediaItem): void {
   const encrypted = new File(mediaFileUri(item.fileName));
-  if (!encrypted.exists || encrypted.size <= 0) {
-    throw new Error('Şifrelenmiş dosya doğrulanamadı');
+  if (!encrypted.exists) throw new Error('Şifrelenmiş dosya doğrulanamadı');
+
+  const chunks = Math.max(1, Math.ceil(item.sizeBytes / DEFAULT_CHUNK_SIZE));
+  const expected = HEADER_LEN + item.sizeBytes + chunks * GCM_TAG_LEN;
+  if (encrypted.size !== expected) {
+    throw new Error(`Şifrelenmiş dosya eksik yazıldı (${encrypted.size}/${expected})`);
   }
 }

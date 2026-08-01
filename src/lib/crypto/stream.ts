@@ -152,15 +152,31 @@ function fileReader(uri: string): ByteReader {
   const file = new File(uri);
   const handle = file.open(FileMode.ReadOnly);
   const size = handle.size ?? file.size;
+  // Both are nullable. Treating an unknown size as 0 would produce a
+  // header-plus-empty-chunk file that passes every check and holds nothing.
+  if (size == null) {
+    handle.close();
+    throw new IntegrityError('Kaynak dosyanın boyutu okunamadı');
+  }
   let offset = 0;
   return {
     remaining: () => size - offset,
     read(length: number) {
       const toRead = Math.min(length, size - offset);
       if (toRead <= 0) return new Uint8Array(0);
-      const bytes = handle.readBytes(toRead);
-      offset += bytes.length;
-      return bytes;
+      // readBytes may return fewer bytes than asked. A short non-final chunk
+      // would be sealed at the wrong length and the file could never be
+      // decrypted, so keep reading until the chunk is whole.
+      const parts: Uint8Array[] = [];
+      let got = 0;
+      while (got < toRead) {
+        const chunk = handle.readBytes(toRead - got);
+        if (chunk.length === 0) break;
+        parts.push(chunk);
+        got += chunk.length;
+      }
+      offset += got;
+      return parts.length === 1 ? parts[0] : concatBytes(...parts);
     },
     close: () => handle.close(),
   };

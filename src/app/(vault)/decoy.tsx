@@ -25,6 +25,7 @@ import {
   verifyPinForRole,
 } from '@/lib/crypto/keys';
 import { zeroize } from '@/lib/crypto/primitives';
+import { hasUntaggedRows } from '@/lib/db/backfill';
 import { requireCtx, useIsPrimary } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
@@ -111,6 +112,9 @@ export default function DecoyScreen() {
   const commit = async (value: string) => {
     const { dek } = requireCtx();
     if (flow === 'create') {
+      // Every existing row must already carry an ownership tag. An untagged row
+      // after a decoy exists would be unattributable to either vault.
+      if (await hasUntaggedRows()) throw new Error('Kasa henüz hazır değil');
       // enableDecoy hands back the plaintext decoy DEK; this session has no use
       // for it, so wipe it rather than leave a live key in the heap.
       zeroize(await enableDecoy(dek, value));

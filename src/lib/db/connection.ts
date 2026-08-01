@@ -19,15 +19,31 @@ async function openAndMigrate(): Promise<SQLite.SQLiteDatabase> {
   const row = await database.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   const current = row?.user_version ?? 0;
   for (let v = current; v < SCHEMA_VERSION; v++) {
-    await database.execAsync(MIGRATIONS[v]);
-    await database.execAsync(`PRAGMA user_version = ${v + 1}`);
+    // One transaction per migration. v2 is two ALTER TABLEs: without this, a
+    // failure on the second would leave user_version un-bumped, and the next
+    // launch would re-run the first and hit "duplicate column name" forever.
+    await database.execAsync('BEGIN');
+    try {
+      await database.execAsync(MIGRATIONS[v]);
+      await database.execAsync(`PRAGMA user_version = ${v + 1}`);
+      await database.execAsync('COMMIT');
+    } catch (e) {
+      await database.execAsync('ROLLBACK').catch(() => undefined);
+      throw e;
+    }
   }
   return database;
 }
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (db) return db;
-  opening ??= openAndMigrate();
+  // Clear the in-flight promise on failure. Caching a rejection would make
+  // every later getDb() fail with the same stale error for the rest of the
+  // process, with no way to retry.
+  opening ??= openAndMigrate().catch((e: unknown) => {
+    opening = null;
+    throw e;
+  });
   db = await opening;
   return db;
 }

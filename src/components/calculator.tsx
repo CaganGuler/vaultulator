@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radius, spacing } from '../theme';
 
-export const PIN_DIGITS = 6;
+import { PIN_LENGTH } from '../lib/crypto/keys';
 
 type Op = '+' | '−' | '×' | '÷';
 
@@ -51,7 +51,7 @@ function format(n: number): string {
 
 /** A bare, unsigned 6-digit entry — the only thing treated as a PIN. */
 function isPinEntry(display: string, pending: Pending | null): boolean {
-  return pending === null && new RegExp(`^\\d{${PIN_DIGITS}}$`).test(display);
+  return pending === null && new RegExp(`^\\d{${PIN_LENGTH}}$`).test(display);
 }
 
 interface KeyProps {
@@ -79,7 +79,7 @@ function CalcKey({ label, onPress, tone = 'digit', wide }: KeyProps) {
 }
 
 interface CalculatorProps {
-  /** Called when a bare 6-digit entry is submitted with `=`. */
+  /** Called when a bare PIN_LENGTH-digit entry is submitted with `=`. */
   onPinEntry?: (pin: string) => void;
   /** False renders a non-interactive copy for the app-switcher cover. */
   interactive?: boolean;

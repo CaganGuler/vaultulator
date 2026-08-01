@@ -19,6 +19,7 @@ import {
   enableDecoy,
   enableDuress,
   getDecoyState,
+  LockedOutError,
   PinInUseError,
   resetDecoyPin,
   verifyPinForRole,
@@ -129,6 +130,9 @@ export default function DecoyScreen() {
           setPin('');
           setStep('new');
         })
+        .catch((e: unknown) =>
+          fail(e instanceof LockedOutError ? 'Çok fazla yanlış deneme. Biraz sonra tekrar dene.' : 'PIN doğrulanamadı.'),
+        )
         .finally(() => setBusy(false));
       return;
     }

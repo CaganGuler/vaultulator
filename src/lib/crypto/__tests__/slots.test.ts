@@ -16,8 +16,11 @@ import {
   disableDuress,
   enableDecoy,
   enableDuress,
+  getAttempts,
   getDecoyState,
+  LockedOutError,
   PinInUseError,
+  resetAttempts,
   resetDecoyPin,
   ROW_TAG_LEN,
   rowTag,
@@ -26,6 +29,7 @@ import {
   SLOT_PRIMARY,
   unlockVault,
   VaultCorruptError,
+  verifyPinForRole,
   WrongPinError,
 } from '../keys';
 import { argon2id, concatBytes, gcmSeal, GCM_IV_LEN, randomBytes, utf8Encode } from '../primitives';
@@ -204,16 +208,95 @@ describe('PIN collisions are rejected', () => {
     await expect(enableDuress(primaryDek, DECOY_PIN)).rejects.toThrow(PinInUseError);
   });
 
-  it('refuses a PIN change onto another slot’s PIN', async () => {
+  it('tells the PRIMARY session that a new PIN is taken', async () => {
     const primaryDek = await createVault(PRIMARY_PIN);
     await enableDecoy(primaryDek, DECOY_PIN);
-    await expect(changePin(DECOY_PIN, PRIMARY_PIN, 'decoy')).rejects.toThrow(PinInUseError);
+    // Safe to be specific here: the primary session already knows the decoy exists.
+    await expect(changePin(PRIMARY_PIN, DECOY_PIN, 'primary')).rejects.toThrow(PinInUseError);
   });
 
   it('refuses a decoy PIN reset onto the primary PIN', async () => {
     const primaryDek = await createVault(PRIMARY_PIN);
     await enableDecoy(primaryDek, DECOY_PIN);
     await expect(resetDecoyPin(primaryDek, PRIMARY_PIN)).rejects.toThrow(PinInUseError);
+  });
+});
+
+describe('a decoy session learns nothing from change-PIN', () => {
+  /**
+   * The attack this closes: a coerced decoy user cycles candidate new PINs and
+   * watches which one is rejected differently. A distinguishable answer would
+   * prove the real vault exists AND recover its PIN by enumeration AND reveal
+   * whether a duress PIN is installed.
+   */
+  it('reports a colliding new PIN exactly like a wrong one', async () => {
+    const primaryDek = await createVault(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+    await enableDuress(primaryDek, DURESS_PIN);
+
+    const collideWithPrimary = await changePin(DECOY_PIN, PRIMARY_PIN, 'decoy').catch((e: Error) => e);
+    await resetAttempts();
+    const collideWithDuress = await changePin(DECOY_PIN, DURESS_PIN, 'decoy').catch((e: Error) => e);
+    await resetAttempts();
+    const plainlyWrong = await changePin('000000', '888888', 'decoy').catch((e: Error) => e);
+    await resetAttempts();
+
+    for (const outcome of [collideWithPrimary, collideWithDuress, plainlyWrong]) {
+      expect(outcome).toBeInstanceOf(WrongPinError);
+      expect((outcome as Error).message).toBe((plainlyWrong as Error).message);
+    }
+  });
+
+  it('leaves every slot untouched when it refuses', async () => {
+    const primaryDek = await createVault(PRIMARY_PIN);
+    const decoyDek = await enableDecoy(primaryDek, DECOY_PIN);
+    const before = await readRecord();
+
+    await expect(changePin(DECOY_PIN, PRIMARY_PIN, 'decoy')).rejects.toThrow(WrongPinError);
+
+    expect(b(await readRecord())).toEqual(b(before));
+    expect(b((await unlockVault(PRIMARY_PIN)).dek)).toEqual(b(primaryDek));
+    expect(b((await unlockVault(DECOY_PIN)).dek)).toEqual(b(decoyDek));
+  });
+});
+
+describe('backoff covers every PIN path, not just unlock', () => {
+  /**
+   * An unlocked session used to be an unmetered oracle: the change-PIN screen
+   * and the decoy auth step ran argon2id as often as asked without ever
+   * touching the attempt counter.
+   */
+  async function exhaustAttempts(attempt: () => Promise<unknown>): Promise<void> {
+    for (let i = 0; i < 3; i++) await attempt().catch(() => undefined);
+  }
+
+  it('locks out change-PIN after repeated wrong current PINs', async () => {
+    const primaryDek = await createVault(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+
+    await exhaustAttempts(() => changePin('000000', '888888', 'decoy'));
+
+    await expect(changePin('000000', '888888', 'decoy')).rejects.toThrow(LockedOutError);
+    // ...and the lockout is global: unlock is barred too.
+    await expect(unlockVault(PRIMARY_PIN)).rejects.toThrow(LockedOutError);
+  });
+
+  it('locks out the decoy screen’s primary-PIN re-entry', async () => {
+    const primaryDek = await createVault(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+
+    await exhaustAttempts(() => verifyPinForRole('000000', 'primary'));
+
+    await expect(verifyPinForRole('000000', 'primary')).rejects.toThrow(LockedOutError);
+  });
+
+  it('clears the counter on a successful change', async () => {
+    await createVault(PRIMARY_PIN);
+    await changePin(PRIMARY_PIN, '888888', 'primary').catch(() => undefined);
+    await changePin('000000', '777777', 'primary').catch(() => undefined);
+    await changePin('888888', '777777', 'primary');
+
+    expect((await getAttempts()).count).toBe(0);
   });
 });
 
@@ -292,9 +375,11 @@ describe('deniability of the stored record', () => {
 
   it('never lets a filler slot authenticate', async () => {
     await createVault(PRIMARY_PIN);
-    // Slots 1-3 are random bytes; no PIN may ever open them.
+    // Slots 1-3 are random bytes; no PIN may ever open them. Reset between
+    // guesses so this exercises the slots, not the (separately tested) backoff.
     for (const pin of ['000000', '222222', '333333', '444444', '999999']) {
       await expect(unlockVault(pin)).rejects.toThrow(WrongPinError);
+      await resetAttempts();
     }
   });
 });

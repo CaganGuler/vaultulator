@@ -23,6 +23,7 @@ export default function ChangePinScreen() {
   const [newPin, setNewPin] = useState('');
   const [errorSignal, setErrorSignal] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [lockedOut, setLockedOut] = useState(false);
 
   const handlePinChange = (value: string) => {
     setPin(value);
@@ -51,18 +52,21 @@ export default function ChangePinScreen() {
     void useSession
       .getState()
       .changePin(currentPin, value)
-      .then((ok) => {
-        if (ok) {
+      .then((result) => {
+        if (result === 'ok') {
           Alert.alert('Tamam', 'PIN değiştirildi.');
           router.back();
-        } else {
-          // mevcut PIN yanlıştı — baştan başla
-          setPin('');
-          setCurrentPin('');
-          setNewPin('');
-          setStep('current');
-          setErrorSignal((n) => n + 1);
+          return;
         }
+        // Anything else restarts the flow with the same message. A decoy
+        // session must not be able to tell "this PIN belongs to the other
+        // vault" apart from "this PIN is wrong" — see docs/SECURITY.md.
+        setPin('');
+        setCurrentPin('');
+        setNewPin('');
+        setStep('current');
+        setErrorSignal((n) => n + 1);
+        setLockedOut(result === 'locked');
       })
       .catch(() => Alert.alert('Hata', 'PIN değiştirilemedi.'))
       .finally(() => setBusy(false));
@@ -72,7 +76,11 @@ export default function ChangePinScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>{TITLES[step]}</Text>
-        {step === 'current' && errorSignal > 0 && <Text style={styles.error}>Mevcut PIN yanlış</Text>}
+        {step === 'current' && errorSignal > 0 && (
+          <Text style={styles.error}>
+            {lockedOut ? 'Çok fazla yanlış deneme. Biraz sonra tekrar dene.' : 'Mevcut PIN yanlış'}
+          </Text>
+        )}
       </View>
       <PinPad value={pin} onChange={handlePinChange} disabled={busy} errorSignal={errorSignal} />
       <Button title="Vazgeç" variant="ghost" onPress={() => router.back()} />

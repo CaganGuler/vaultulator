@@ -25,8 +25,7 @@ import {
   deriveTagKey,
   destroyVaultKeys,
   getAttempts,
-  recordFailedAttempt,
-  resetAttempts,
+  LockedOutError,
   unlockVault,
   vaultExists,
   type VaultRole,
@@ -43,6 +42,8 @@ import { ensureVaultDirs, sweepOrphanFiles, wipeDecryptedDir, wipeVaultFiles } f
 
 export type SessionStatus = 'loading' | 'uninitialized' | 'locked' | 'unlocked';
 
+export type ChangePinResult = 'ok' | 'wrong' | 'locked';
+
 export interface UnlockResult {
   ok: boolean;
   /** Set when the vault is in a backoff lockout (epoch ms). */
@@ -58,7 +59,7 @@ interface SessionState {
   create(pin: string): Promise<void>;
   unlock(pin: string): Promise<UnlockResult>;
   lock(): void;
-  changePin(oldPin: string, newPin: string): Promise<boolean>;
+  changePin(oldPin: string, newPin: string): Promise<ChangePinResult>;
   /** Full reset. Primary sessions only — a decoy must use wipeOwnContent(). */
   destroy(): Promise<void>;
   /** Wipes only this vault's rows and files; the other vault is untouched. */
@@ -96,14 +97,10 @@ export const useSession = create<SessionState>((set, get) => ({
   },
 
   async unlock(pin: string) {
-    const attempts = await getAttempts();
-    const now = Date.now();
-    if (attempts.lockUntil > now) {
-      return { ok: false, lockUntil: attempts.lockUntil, failedCount: attempts.count };
-    }
     try {
-      // A duress PIN destroys the primary slot inside unlockVault before
-      // returning, so nothing here can skip it.
+      // The lockout gate and the attempt counter live in unlockVault, not here,
+      // so no PIN path in the app can be an unmetered guessing oracle. A duress
+      // PIN likewise destroys the primary slot in there before returning.
       const opened = await unlockVault(pin);
       const ctx = contextFor(opened.dek, opened.role);
 
@@ -111,13 +108,16 @@ export const useSession = create<SessionState>((set, get) => ({
       // un-backfilled rows would show the user an empty vault.
       await backfillRowTags(ctx);
 
-      await resetAttempts();
       clearThumbCache(); // a duress unlock arrives without a preceding lock()
       set({ status: 'unlocked', ctx, lockUntil: 0 });
       return { ok: true };
     } catch (e) {
+      if (e instanceof LockedOutError) {
+        set({ lockUntil: e.lockUntil });
+        return { ok: false, lockUntil: e.lockUntil };
+      }
       if (e instanceof WrongPinError) {
-        const next = await recordFailedAttempt(now);
+        const next = await getAttempts();
         set({ lockUntil: next.lockUntil });
         return { ok: false, lockUntil: next.lockUntil, failedCount: next.count };
       }
@@ -136,14 +136,16 @@ export const useSession = create<SessionState>((set, get) => ({
 
   async changePin(oldPin: string, newPin: string) {
     const { ctx } = get();
-    if (!ctx) throw new Error('Kasa kilitli');
+    if (!ctx) throw new Error('İçerik kilitli');
     try {
-      // Scoped to this session's own slot: typing another vault's PIN here has
-      // to look exactly like typing a wrong one.
+      // Scoped to this session's own slot. Every rejection reason collapses to
+      // 'wrong' on purpose — a decoy session must not be able to tell "that PIN
+      // belongs to another vault" apart from "that PIN is simply wrong".
       await changePinKeys(oldPin, newPin, ctx.role);
-      return true;
+      return 'ok' as const;
     } catch (e) {
-      if (e instanceof WrongPinError) return false;
+      if (e instanceof WrongPinError) return 'wrong' as const;
+      if (e instanceof LockedOutError) return 'locked' as const;
       throw e;
     }
   },

@@ -372,73 +372,154 @@ async function migrateLegacy(pin: string, pepper: Uint8Array, params: StoredKdfP
   return { dek, role: 'primary', slotIndex: SLOT_PRIMARY };
 }
 
-/** Unwraps a DEK with the given PIN. Throws WrongPinError when no slot opens. */
-export async function unlockVault(pin: string): Promise<UnlockedSlot> {
+/** Raised instead of running the KDF while the backoff window is open. */
+export class LockedOutError extends Error {
+  constructor(readonly lockUntil: number) {
+    super('Çok fazla yanlış deneme');
+    this.name = 'LockedOutError';
+  }
+}
+
+interface PinAttempt {
+  rec: VaultRecord;
+  pepper: Uint8Array;
+  params: StoredKdfParams;
+  opened: UnlockedSlot;
+}
+
+/**
+ * The one way to turn a PIN into an opened slot.
+ *
+ * Enforces the backoff window and maintains the attempt counter, so no caller
+ * can create an unmetered guessing oracle. That matters most from *inside* an
+ * unlocked session: a coerced decoy user with unlimited free guesses at the
+ * change-PIN screen would eventually find the real PIN, which is precisely
+ * what the decoy exists to prevent.
+ *
+ * Throws LockedOutError before doing any work, or WrongPinError after
+ * recording the failure. The caller owns `pepper` and must zeroize it.
+ */
+async function attemptPin(pin: string, now: number): Promise<PinAttempt> {
+  const attempts = await getAttempts();
+  if (attempts.lockUntil > now) throw new LockedOutError(attempts.lockUntil);
+
+  const rec = await loadRecord();
+  if (!rec) throw new VaultCorruptError('Kasa kaydı yok');
   const { pepper, params } = await loadContext();
+
+  let opened: UnlockedSlot | null;
   try {
-    const rec = await loadRecord();
-    if (!rec) return await migrateLegacy(pin, pepper, params);
-
-    // A crash mid-migration can leave both layouts behind; the record wins.
-    if ((await SecureStore.getItemAsync(LEGACY_KEY_WRAPPED_DEK, SECURE_OPTS)) != null) {
-      await SecureStore.deleteItemAsync(LEGACY_KEY_WRAPPED_DEK, SECURE_OPTS);
-      await SecureStore.deleteItemAsync(LEGACY_KEY_PIN_SALT, SECURE_OPTS);
-    }
-
     const kek = await deriveKek(pin, rec.pinSalt, pepper, params);
-    let opened: UnlockedSlot | null;
     try {
       opened = trialSlots(kek, rec);
     } finally {
       zeroize(kek);
     }
-    if (!opened) throw new WrongPinError();
-
-    // The duress wipe lives here, not in a caller, so no code path can reach a
-    // duress unlock without it happening first. The slot wraps the decoy's DEK,
-    // so what follows is an ordinary decoy session.
-    if (opened.role === 'duress') await destroyPrimarySlot();
-    return opened;
-  } finally {
+  } catch (e) {
     zeroize(pepper);
+    throw e;
   }
+
+  if (!opened) {
+    zeroize(pepper);
+    // Stamp the lockout from after the KDF ran, not before, or every window
+    // would be short by one argon2id duration.
+    await recordFailedAttempt(Date.now());
+    throw new WrongPinError();
+  }
+  return { rec, pepper, params, opened };
+}
+
+/** Unwraps a DEK with the given PIN. Throws WrongPinError when no slot opens. */
+export async function unlockVault(pin: string): Promise<UnlockedSlot> {
+  // The legacy layout predates the attempt record's current shape; migrate it
+  // first so everything after this point sees one world.
+  if ((await loadRecord()) == null) {
+    const attempts = await getAttempts();
+    const now = Date.now();
+    if (attempts.lockUntil > now) throw new LockedOutError(attempts.lockUntil);
+    const { pepper, params } = await loadContext();
+    try {
+      const migrated = await migrateLegacy(pin, pepper, params);
+      await resetAttempts();
+      return migrated;
+    } catch (e) {
+      if (e instanceof WrongPinError) await recordFailedAttempt(Date.now());
+      throw e;
+    } finally {
+      zeroize(pepper);
+    }
+  }
+
+  // A crash mid-migration can leave both layouts behind; the record wins.
+  if ((await SecureStore.getItemAsync(LEGACY_KEY_WRAPPED_DEK, SECURE_OPTS)) != null) {
+    await SecureStore.deleteItemAsync(LEGACY_KEY_WRAPPED_DEK, SECURE_OPTS);
+    await SecureStore.deleteItemAsync(LEGACY_KEY_PIN_SALT, SECURE_OPTS);
+  }
+
+  const { pepper, opened } = await attemptPin(pin, Date.now());
+  zeroize(pepper);
+  await resetAttempts();
+
+  // The duress wipe lives here, not in a caller, so no code path can reach a
+  // duress unlock without it happening first. The slot wraps the decoy's DEK,
+  // so what follows is an ordinary decoy session.
+  //
+  // Fail open: if the write throws we must still hand back the decoy session.
+  // Surfacing an error here would leave the coercer watching the calculator do
+  // nothing, which is itself a tell — and the primary would survive anyway.
+  if (opened.role === 'duress') {
+    try {
+      await destroyPrimarySlot();
+    } catch {
+      // best effort — the decoy session must open regardless
+    }
+  }
+  return opened;
 }
 
 /**
  * Re-wraps one slot's DEK under a new PIN. Media is never re-encrypted.
  *
- * `requiredRole` scopes the check to the caller's own slot: typing the primary
- * PIN into a decoy session's change-PIN screen must be indistinguishable from
- * typing gibberish, so the same work happens and the same error comes back.
+ * `requiredRole` scopes the check to the caller's own slot, and every failure
+ * mode below collapses to the same WrongPinError after the same amount of
+ * work. From a coerced decoy session this screen must not answer *any*
+ * question about the other vaults — not "does the real PIN exist", not "is a
+ * duress PIN installed". See the collision note below.
  */
 export async function changePin(oldPin: string, newPin: string, requiredRole: VaultRole): Promise<void> {
-  const rec = await loadRecord();
-  if (!rec) throw new VaultCorruptError('Kasa kaydı yok');
-  const { pepper, params } = await loadContext();
+  const { rec, pepper, params, opened } = await attemptPin(oldPin, Date.now());
 
   try {
-    const kekOld = await deriveKek(oldPin, rec.pinSalt, pepper, params);
-    let opened: UnlockedSlot | null;
-    try {
-      opened = trialSlots(kekOld, rec);
-    } finally {
-      zeroize(kekOld);
-    }
-    if (!opened || opened.role !== requiredRole) {
-      if (opened) zeroize(opened.dek);
-      throw new WrongPinError();
-    }
-
+    // Both KEKs are derived before any decision is made, so a rejection costs
+    // the same wall-clock time whichever branch caused it.
     const kekNew = await deriveKek(newPin, rec.pinSalt, pepper, params);
     try {
-      assertPinFree(kekNew, rec, opened.slotIndex);
+      if (opened.role !== requiredRole) throw new WrongPinError();
+
+      try {
+        assertPinFree(kekNew, rec, opened.slotIndex);
+      } catch (e) {
+        // A collision means the new PIN belongs to another slot. Telling a
+        // decoy session that would prove the real vault exists and would leak
+        // the real PIN by enumeration, so outside the primary vault it is
+        // reported as an ordinary wrong PIN. Accepting it is not an option
+        // either: two slots under one KEK makes trialSlots fail closed.
+        if (e instanceof PinInUseError && requiredRole !== 'primary') throw new WrongPinError();
+        throw e;
+      }
+
       rec.slots[opened.slotIndex] = sealSlot(kekNew, opened.role, opened.dek);
     } finally {
       zeroize(kekNew);
-      zeroize(opened.dek);
     }
     await saveRecord(rec);
+    await resetAttempts();
+  } catch (e) {
+    if (e instanceof WrongPinError) await recordFailedAttempt(Date.now());
+    throw e;
   } finally {
+    zeroize(opened.dek);
     zeroize(pepper);
   }
 }
@@ -448,21 +529,21 @@ export async function changePin(oldPin: string, newPin: string, requiredRole: Va
  * destructive settings behind a re-entry of the primary PIN.
  */
 export async function verifyPinForRole(pin: string, role: VaultRole): Promise<boolean> {
-  const rec = await loadRecord();
-  if (!rec) return false;
-  const { pepper, params } = await loadContext();
+  let attempt: PinAttempt;
   try {
-    const kek = await deriveKek(pin, rec.pinSalt, pepper, params);
-    try {
-      const opened = trialSlots(kek, rec);
-      if (!opened) return false;
-      zeroize(opened.dek);
-      return opened.role === role;
-    } finally {
-      zeroize(kek);
-    }
+    attempt = await attemptPin(pin, Date.now());
+  } catch (e) {
+    if (e instanceof WrongPinError) return false;
+    throw e;
+  }
+  try {
+    const ok = attempt.opened.role === role;
+    if (ok) await resetAttempts();
+    else await recordFailedAttempt(Date.now());
+    return ok;
   } finally {
-    zeroize(pepper);
+    zeroize(attempt.opened.dek);
+    zeroize(attempt.pepper);
   }
 }
 

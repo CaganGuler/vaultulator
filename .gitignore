@@ -17,6 +17,16 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
+*.keystore
+*.cer
+*.certSigningRequest
+
+# Local build output. Xcode DerivedData plus the exported app bundle — gigabytes,
+# and the payload is a signed binary that must never reach a remote.
+build/
+*.ipa
+*.app/
+*.xcarchive/
 
 # Metro
 .metro-health-check*
@@ -31,10 +41,14 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
 *.tsbuildinfo
+
+# test output
+coverage/
 
 example
 

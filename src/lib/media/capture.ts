@@ -13,6 +13,7 @@ import * as VideoThumbnails from 'expo-video-thumbnails';
 
 import { insertMediaItem, type MediaItem } from '../db/media-repo';
 import type { VaultContext } from '../db/scope';
+import { assertStillCurrent } from '../../stores/session';
 import { encryptFile, type StreamProgress } from '../crypto/stream';
 import { deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
@@ -54,6 +55,12 @@ export async function ingestCapturedPhoto(input: IngestPhotoInput): Promise<Medi
     await encryptFile({ dek: input.ctx.dek, itemId: id, sourceUri: input.sourceUri, destUri: mediaFileUri(item.fileName) });
     await encryptFile({ dek: input.ctx.dek, itemId: id, sourceUri: thumbTempUri, destUri: thumbFileUri(item.thumbName!) });
     assertEncryptedExists(item);
+    // Encryption can outlast the session (a long video produces no touch
+    // events, so the inactivity timer fires mid-pipeline and zeroizes the very
+    // buffers we are still reading). Bail before writing a row that would be
+    // tagged with an all-zero key and therefore invisible to every vault; the
+    // catch below removes the ciphertext we already wrote.
+    assertStillCurrent(input.ctx);
     await insertMediaItem(input.ctx, item);
     return item;
   } catch (e) {
@@ -105,6 +112,12 @@ export async function ingestCapturedVideo(input: IngestVideoInput): Promise<Medi
     });
     await encryptFile({ dek: input.ctx.dek, itemId: id, sourceUri: thumbTempUri, destUri: thumbFileUri(item.thumbName!) });
     assertEncryptedExists(item);
+    // Encryption can outlast the session (a long video produces no touch
+    // events, so the inactivity timer fires mid-pipeline and zeroizes the very
+    // buffers we are still reading). Bail before writing a row that would be
+    // tagged with an all-zero key and therefore invisible to every vault; the
+    // catch below removes the ciphertext we already wrote.
+    assertStillCurrent(input.ctx);
     await insertMediaItem(input.ctx, item);
     return item;
   } catch (e) {

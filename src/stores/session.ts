@@ -51,10 +51,22 @@ export interface UnlockResult {
   failedCount?: number;
 }
 
+/** Raised when a long operation outlives the session it started in. */
+export class SessionChangedError extends Error {
+  constructor() {
+    super('Oturum değişti');
+    this.name = 'SessionChangedError';
+  }
+}
+
 interface SessionState {
   status: SessionStatus;
   ctx: VaultContext | null;
   lockUntil: number;
+  /** Non-zero while work that must not be interrupted is in flight. */
+  busy: number;
+  /** Marks a long operation; call the returned function when it finishes. */
+  beginBusy(): () => void;
   init(): Promise<void>;
   create(pin: string): Promise<void>;
   unlock(pin: string): Promise<UnlockResult>;
@@ -81,6 +93,17 @@ export const useSession = create<SessionState>((set, get) => ({
   status: 'loading',
   ctx: null,
   lockUntil: 0,
+  busy: 0,
+
+  beginBusy() {
+    set((s) => ({ busy: s.busy + 1 }));
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      set((s) => ({ busy: Math.max(0, s.busy - 1) }));
+    };
+  },
 
   async init() {
     wipeDecryptedDir(); // covers temp files left behind by a crash / force kill
@@ -177,6 +200,22 @@ export function requireCtx(): VaultContext {
   const { ctx, status } = useSession.getState();
   if (status !== 'unlocked' || !ctx) throw new Error('İçerik kilitli');
   return ctx;
+}
+
+/**
+ * Throws if the session has moved on since `ctx` was taken.
+ *
+ * lock() zeroizes the context's buffers in place, so anything holding a `ctx`
+ * across an await keeps a reference that can silently turn into zeros. That is
+ * not hypothetical: encrypting a large video takes minutes and produces no
+ * touch events, so the inactivity timer fires mid-pipeline and the remaining
+ * steps would derive keys and ownership tags from an all-zero buffer — writing
+ * a row that belongs to no vault and content nothing can decrypt.
+ *
+ * Long operations must call this before they commit anything.
+ */
+export function assertStillCurrent(ctx: VaultContext): void {
+  if (useSession.getState().ctx !== ctx) throw new SessionChangedError();
 }
 
 /**

@@ -3,13 +3,13 @@ import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/button';
 import { ProgressOverlay } from '@/components/progress-overlay';
 import { ingestCapturedPhoto, ingestCapturedVideo } from '@/lib/media/capture';
-import { requireCtx } from '@/stores/session';
+import { requireCtx, SessionChangedError, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
 type CaptureMode = 'picture' | 'video';
@@ -44,19 +44,35 @@ export default function CameraScreen() {
     );
   }
 
+  /**
+   * Ingest holds the session context across minutes of encryption, so it is
+   * marked busy: the idle timer must not lock and zeroize those buffers
+   * mid-write. Deliberate locks still apply, and ingest re-checks the session
+   * before committing, so the worst case is a clean abort rather than an item
+   * that silently belongs to no vault.
+   */
+  const runIngest = async (work: (ctx: ReturnType<typeof requireCtx>) => Promise<void>) => {
+    const release = useSession.getState().beginBusy();
+    setSaving(true);
+    try {
+      await work(requireCtx());
+      router.back();
+    } finally {
+      release();
+      setSaving(false);
+      setProgress(null);
+    }
+  };
+
   const takePhoto = async () => {
     const camera = cameraRef.current;
     if (!camera || saving) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const photo = await camera.takePictureAsync({ exif: false });
-    setSaving(true);
     setProgress(null);
-    try {
-      await ingestCapturedPhoto({ ctx: requireCtx(), sourceUri: photo.uri, width: photo.width, height: photo.height });
-      router.back();
-    } finally {
-      setSaving(false);
-    }
+    await runIngest(async (ctx) => {
+      await ingestCapturedPhoto({ ctx, sourceUri: photo.uri, width: photo.width, height: photo.height });
+    });
   };
 
   const toggleRecording = async () => {
@@ -73,22 +89,34 @@ export default function CameraScreen() {
     setRecordSeconds(0);
     setRecording(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    let video: { uri: string } | undefined;
     try {
-      const video = await camera.recordAsync();
-      setRecording(false);
-      if (!video?.uri) return;
-      setSaving(true);
-      setProgress(0);
-      await ingestCapturedVideo({
-        ctx: requireCtx(),
-        sourceUri: video.uri,
-        onProgress: (p) => setProgress(p.totalBytes > 0 ? p.processedBytes / p.totalBytes : null),
-      });
-      router.back();
+      video = await camera.recordAsync();
     } finally {
       setRecording(false);
-      setSaving(false);
     }
+    if (!video?.uri) return;
+    setProgress(0);
+    const uri = video.uri;
+    await runIngest(async (ctx) => {
+      await ingestCapturedVideo({
+        ctx,
+        sourceUri: uri,
+        onProgress: (p) => setProgress(p.totalBytes > 0 ? p.processedBytes / p.totalBytes : null),
+      });
+    });
+  };
+
+  /** Nothing below may reject silently — a lost capture must be visible. */
+  const runCapture = (work: () => Promise<void>) => {
+    void work().catch((e: unknown) => {
+      Alert.alert(
+        'Kaydedilemedi',
+        e instanceof SessionChangedError
+          ? 'Kasa işlem sırasında kilitlendi, çekim kaydedilmedi. Tekrar dene.'
+          : 'Çekim kaydedilemedi. Cihazda yer kalmamış olabilir.',
+      );
+    });
   };
 
   const formattedTimer = `${String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:${String(recordSeconds % 60).padStart(2, '0')}`;
@@ -128,7 +156,7 @@ export default function CameraScreen() {
             </View>
           )}
           <Pressable
-            onPress={() => void (mode === 'picture' ? takePhoto() : toggleRecording())}
+            onPress={() => runCapture(mode === 'picture' ? takePhoto : toggleRecording)}
             style={[styles.shutter, mode === 'video' && styles.shutterVideo]}
           >
             {mode === 'video' && <View style={[styles.shutterInner, recording && styles.shutterInnerRecording]} />}

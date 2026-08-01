@@ -24,7 +24,7 @@ import {
   resetDecoyPin,
   verifyPinForRole,
 } from '@/lib/crypto/keys';
-import { requireCtx, useSession } from '@/stores/session';
+import { requireCtx, useIsPrimary } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
 type Flow = 'menu' | 'create' | 'reset' | 'duress';
@@ -65,7 +65,8 @@ export default function DecoyScreen() {
   const [errorSignal, setErrorSignal] = useState(0);
   const [busy, setBusy] = useState(false);
 
-  const isPrimary = useSession((s) => s.ctx?.role === 'primary');
+  // CLAUDE.md #8: this is the only role question the UI may ask.
+  const isPrimary = useIsPrimary();
 
   const refresh = useCallback(async () => {
     setState(await getDecoyState(requireCtx().dek));
@@ -79,7 +80,7 @@ export default function DecoyScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (isPrimary) void refresh();
+      if (isPrimary) void refresh().catch(() => Alert.alert('Hata', 'Durum okunamadı.'));
     }, [isPrimary, refresh]),
   );
 

@@ -12,7 +12,7 @@ const COLUMNS = 3;
 const GAP = 2;
 
 export default function GalleryScreen() {
-  const { items, loading } = useMediaItems();
+  const { items, loading, error } = useMediaItems();
   const { width } = useWindowDimensions();
   const tileSize = (width - GAP * (COLUMNS - 1)) / COLUMNS;
 
@@ -22,7 +22,9 @@ export default function GalleryScreen() {
         <Text style={styles.title}>Galeri</Text>
         <Text style={styles.count}>{items.length > 0 ? `${items.length} öğe` : ''}</Text>
       </View>
-      {!loading && items.length === 0 ? (
+      {error ? (
+        <EmptyState icon="alert-circle-outline" title="Yüklenemedi" subtitle="İçerik okunamadı. Kilitleyip tekrar açmayı dene." />
+      ) : !loading && items.length === 0 ? (
         <EmptyState
           icon="images-outline"
           title="Burası boş"

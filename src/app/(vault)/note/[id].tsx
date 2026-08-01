@@ -19,13 +19,17 @@ export default function NoteEditor() {
 
   useEffect(() => {
     if (isNew) return;
-    void getNote(requireCtx(), id).then((note) => {
-      if (note) {
-        setTitle(note.title);
-        setBody(note.body);
-      }
-      setLoaded(true);
-    });
+    void getNote(requireCtx(), id)
+      .then((note) => {
+        if (note) {
+          setTitle(note.title);
+          setBody(note.body);
+        }
+      })
+      // A corrupt or undecryptable row must still let the editor open, or the
+      // screen stays blank with no way to delete the bad note.
+      .catch(() => Alert.alert('Hata', 'Not okunamadı.'))
+      .finally(() => setLoaded(true));
   }, [id, isNew]);
 
   const save = async (): Promise<void> => {
@@ -42,8 +46,10 @@ export default function NoteEditor() {
 
   const saveAndClose = () => {
     void save()
-      .catch(() => Alert.alert('Hata', 'Not kaydedilemedi.'))
-      .finally(() => router.back());
+      .then(() => router.back())
+      // Stay on the screen when saving fails — navigating away behind the
+      // alert would discard whatever the user just typed.
+      .catch(() => Alert.alert('Hata', 'Not kaydedilemedi.'));
   };
 
   const confirmDelete = () => {
@@ -54,7 +60,9 @@ export default function NoteEditor() {
         style: 'destructive',
         onPress: () => {
           dirty.current = false;
-          void (noteId ? deleteNote(requireCtx(), noteId) : Promise.resolve()).then(() => router.back());
+          void (noteId ? deleteNote(requireCtx(), noteId) : Promise.resolve())
+            .then(() => router.back())
+            .catch(() => Alert.alert('Hata', 'Not silinemedi.'));
         },
       },
     ]);

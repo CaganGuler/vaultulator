@@ -21,6 +21,7 @@ export default function MediaViewer() {
   const [decryptProgress, setDecryptProgress] = useState<number | null>(null);
   const [decrypting, setDecrypting] = useState(true);
   const [sharing, setSharing] = useState(false);
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,7 +29,13 @@ export default function MediaViewer() {
     void (async () => {
       const ctx = requireCtx();
       const loaded = await getMediaItem(ctx, id);
-      if (!loaded || cancelled) return;
+      if (cancelled) return;
+      if (!loaded) {
+        // Foreign or deleted id from a navigation param — do not spin forever.
+        setDecrypting(false);
+        setNotFound(true);
+        return;
+      }
       setItem(loaded);
       const { dek } = ctx;
       if (loaded.type === 'photo') {
@@ -81,7 +88,9 @@ export default function MediaViewer() {
         text: 'Sil',
         style: 'destructive',
         onPress: () => {
-          void deleteMediaItem(requireCtx(), item).then(() => router.back());
+          void deleteMediaItem(requireCtx(), item)
+            .then(() => router.back())
+            .catch(() => Alert.alert('Hata', 'Silinemedi.'));
         },
       },
     ]);
@@ -93,7 +102,13 @@ export default function MediaViewer() {
         <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} contentFit="contain" />
       )}
       {item?.type === 'video' && videoUri && <VideoPlayerView uri={videoUri} />}
-      {decrypting && item?.type !== 'video' && (
+      {notFound && (
+        <View style={styles.loading}>
+          <Ionicons name="alert-circle-outline" size={44} color={colors.textDim} />
+          <Text style={styles.meta}>Bu içerik bulunamadı.</Text>
+        </View>
+      )}
+      {decrypting && !notFound && item?.type !== 'video' && (
         <View style={styles.loading}>
           <ActivityIndicator color={colors.accent} size="large" />
         </View>

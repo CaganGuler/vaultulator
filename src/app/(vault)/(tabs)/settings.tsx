@@ -21,8 +21,12 @@ export default function SettingsScreen() {
   useFocusEffect(
     useCallback(() => {
       const ctx = requireCtx();
-      void getVaultStats(ctx).then(setStats);
-      void countNotes(ctx).then(setNoteCount);
+      void getVaultStats(ctx)
+        .then(setStats)
+        .catch(() => setStats(null));
+      void countNotes(ctx)
+        .then(setNoteCount)
+        .catch(() => setNoteCount(0));
     }, []),
   );
 
@@ -94,7 +98,12 @@ export default function SettingsScreen() {
             <Pressable
               key={option.seconds}
               style={styles.row}
-              onPress={() => void useSettings.getState().setAutoLockSeconds(option.seconds)}
+              onPress={() =>
+                void useSettings
+                  .getState()
+                  .setAutoLockSeconds(option.seconds)
+                  .catch(() => Alert.alert('Hata', 'Ayar kaydedilemedi.'))
+              }
             >
               <Text style={styles.rowText}>{option.label}</Text>
               {autoLockSeconds === option.seconds && <Ionicons name="checkmark" size={20} color={colors.accent} />}

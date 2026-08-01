@@ -8,14 +8,16 @@ import { useNotes } from '@/hooks/use-notes';
 import { colors, formatDate, radius, spacing } from '@/theme';
 
 export default function NotesScreen() {
-  const { notes, loading } = useNotes();
+  const { notes, loading, error } = useNotes();
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Notlar</Text>
       </View>
-      {!loading && notes.length === 0 ? (
+      {error ? (
+        <EmptyState icon="alert-circle-outline" title="Yüklenemedi" subtitle="Notlar okunamadı. Kilitleyip tekrar açmayı dene." />
+      ) : !loading && notes.length === 0 ? (
         <EmptyState
           icon="document-lock-outline"
           title="Henüz not yok"

@@ -1,9 +1,10 @@
-import { Stack } from 'expo-router';
+import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
+import { Calculator } from '@/components/calculator';
 import { PrivacyCover } from '@/components/privacy-cover';
 import { useAutoLock } from '@/hooks/use-auto-lock';
 import { useSession } from '@/stores/session';
@@ -11,6 +12,28 @@ import { useSettings } from '@/stores/settings';
 import { colors } from '@/theme';
 
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * Catches any render error below the root.
+ *
+ * Two jobs, in order: get the decrypted content off the screen, and never show
+ * a red box or a stack trace — that would announce this is not a calculator.
+ * One automatic retry lands the user back on the lock screen; if the error
+ * repeats, the static calculator stays, which reads as a frozen app rather
+ * than a crashed vault.
+ */
+export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
+  const retried = useRef(false);
+
+  useEffect(() => {
+    useSession.getState().lock();
+    if (retried.current) return;
+    retried.current = true;
+    void retry();
+  }, [retry]);
+
+  return <Calculator interactive={false} />;
+}
 
 export default function RootLayout() {
   const status = useSession((s) => s.status);
@@ -21,6 +44,9 @@ export default function RootLayout() {
       .getState()
       .init()
       .then(() => useSettings.getState().load())
+      // A failed init would otherwise leave `status` on 'loading' forever —
+      // an app stuck on a spinner with no way out and no diagnostic.
+      .catch(() => useSession.setState({ status: 'locked' }))
       .finally(() => SplashScreen.hideAsync());
   }, []);
 

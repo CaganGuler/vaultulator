@@ -49,8 +49,25 @@
       ],
       "expo-video",
       "expo-sqlite",
-      "expo-secure-store",
-      "expo-sharing"
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Kayıtlı verilere erişim için kullanılır."
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kaydettiğin belgeleri uygulamaya almak için galeriye erişim izni gerekiyor."
+        }
+      ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Cihaz hareketiyle hızlı kısayollar için hareket verisi kullanılır."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

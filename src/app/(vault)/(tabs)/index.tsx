@@ -18,6 +18,7 @@ import {
   pickDocuments,
   pickFromLibrary,
 } from '@/lib/media/import';
+import { canShareOut, shareMediaItem } from '@/lib/media/share';
 import { requireCtx, SessionChangedError, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
@@ -43,6 +44,7 @@ export default function GalleryScreen() {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [captionIndex, setCaptionIndex] = useState<Map<string, string> | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ label: string; current: number; total: number } | null>(null);
 
   // Shared with the viewer so both screens page through the same list.
   const ordered = useMemo(() => applyGalleryOrder(items, filter, oldestFirst), [items, filter, oldestFirst]);
@@ -146,6 +148,8 @@ export default function GalleryScreen() {
     })().catch(() => Alert.alert('Hata', 'Albümler okunamadı.'));
   };
 
+  const selectAll = () => setSelection(new Set(visible.map((item) => item.id)));
+
   const confirmBulkDelete = () => {
     const ids = selection;
     if (!ids || ids.size === 0) return;
@@ -158,13 +162,53 @@ export default function GalleryScreen() {
           void (async () => {
             const ctx = requireCtx();
             const targets = items.filter((i) => ids.has(i.id));
-            for (const target of targets) await deleteMediaItem(ctx, target);
+            // Deleting 200 items used to freeze the UI silently.
+            for (const [at, target] of targets.entries()) {
+              setBulkProgress({ label: 'Siliniyor', current: at + 1, total: targets.length });
+              await deleteMediaItem(ctx, target);
+            }
             setSelection(null);
             await refresh();
-          })().catch(() => Alert.alert('Hata', 'Silinemedi.'));
+          })()
+            .catch(() => Alert.alert('Hata', 'Silinemedi.'))
+            .finally(() => setBulkProgress(null));
         },
       },
     ]);
+  };
+
+  /**
+   * Sequential, with the per-item confirm kept. Each file leaves the vault
+   * separately, so one blanket "share 40 things" approval would be a weaker
+   * promise than the one the single-item path makes.
+   */
+  const bulkShare = () => {
+    const ids = selection;
+    if (!ids || ids.size === 0) return;
+    const targets = items.filter((i) => ids.has(i.id));
+    Alert.alert(
+      'Kasadan dışarı paylaş',
+      `${targets.length} öğe şifresi çözülerek kasanın DIŞINA paylaşılacak. Her biri için ayrı ayrı onaylaman istenecek.`,
+      [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Devam',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const ctx = requireCtx();
+              for (const [at, target] of targets.entries()) {
+                setBulkProgress({ label: 'Paylaşılıyor', current: at + 1, total: targets.length });
+                await shareMediaItem(ctx.dek, target);
+              }
+              setSelection(null);
+            })()
+              .catch(() => Alert.alert('Hata', 'Paylaşım tamamlanamadı.'))
+              .finally(() => setBulkProgress(null));
+          },
+        },
+      ],
+    );
   };
 
   const renderItem = ({ item }: { item: MediaItem }) => (
@@ -188,6 +232,23 @@ export default function GalleryScreen() {
         <Text style={styles.title}>{selecting ? `${selectedCount} seçili` : 'Galeri'}</Text>
         {selecting ? (
           <View style={styles.headerActions}>
+            <Pressable onPress={selectAll} accessibilityRole="button" accessibilityLabel="Tümünü seç">
+              <Ionicons name="checkmark-done-outline" size={22} color={colors.text} />
+            </Pressable>
+            {canShareOut() && (
+              <Pressable
+                onPress={bulkShare}
+                disabled={selectedCount === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Seçilenleri paylaş"
+              >
+                <Ionicons
+                  name="share-outline"
+                  size={22}
+                  color={selectedCount === 0 ? colors.textDim : colors.text}
+                />
+              </Pressable>
+            )}
             <Pressable
               onPress={addSelectionToAlbum}
               disabled={selectedCount === 0}
@@ -338,6 +399,11 @@ export default function GalleryScreen() {
         </View>
       )}
 
+      <ProgressOverlay
+        visible={bulkProgress !== null}
+        label={bulkProgress ? `${bulkProgress.label} (${bulkProgress.current}/${bulkProgress.total})…` : ''}
+        progress={bulkProgress ? bulkProgress.current / bulkProgress.total : null}
+      />
       <ProgressOverlay
         visible={importing !== null}
         label={importing ? `Alınıyor (${importing.current}/${importing.total})…` : ''}

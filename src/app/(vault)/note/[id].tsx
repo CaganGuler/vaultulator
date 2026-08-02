@@ -1,14 +1,33 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createNote, deleteNote, getNote, updateNote } from '@/lib/db/notes-repo';
+import {
+  appendChecklistItem,
+  checklistProgress,
+  hasChecklist,
+  splitBodyLines,
+  toggleChecklistLine,
+} from '@/lib/notes/checklist';
 import { requireCtx, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
 const AUTOSAVE_MS = 1500;
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
 export default function NoteEditor() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -17,6 +36,8 @@ export default function NoteEditor() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [loaded, setLoaded] = useState(isNew);
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const [checklistMode, setChecklistMode] = useState(false);
   const dirty = useRef(false);
 
   useEffect(() => {
@@ -37,13 +58,34 @@ export default function NoteEditor() {
   const save = async (): Promise<void> => {
     if (!dirty.current) return;
     const ctx = requireCtx();
-    if (noteId) {
-      await updateNote(ctx, noteId, title, body);
-    } else if (title.trim() || body.trim()) {
-      const created = await createNote(ctx, title, body);
-      setNoteId(created.id);
+    setSaveState('saving');
+    try {
+      if (noteId) {
+        await updateNote(ctx, noteId, title, body);
+      } else if (title.trim() || body.trim()) {
+        const created = await createNote(ctx, title, body);
+        setNoteId(created.id);
+      }
+      dirty.current = false;
+      setSaveState('saved');
+    } catch (err) {
+      // There is no recovery path for a lost note, so a failed autosave must
+      // be visible rather than swallowed by the timer that called it.
+      setSaveState('error');
+      throw err;
     }
-    dirty.current = false;
+  };
+
+  // Once the buffer is dirty again the previous "Kaydedildi" is a false
+  // statement, which is exactly what the indicator exists to prevent.
+  const markDirty = () => {
+    dirty.current = true;
+    setSaveState((prev) => (prev === 'saved' ? 'idle' : prev));
+  };
+
+  const edit = (next: string) => {
+    setBody(next);
+    markDirty();
   };
 
   // Autosave. Saving used to happen only via the header button, so a back
@@ -105,6 +147,12 @@ export default function NoteEditor() {
     ]);
   };
 
+  const listed = hasChecklist(body);
+  const progress = useMemo(() => checklistProgress(body), [body]);
+  // Checklist mode renders every line, not just the checklist ones, so the
+  // surrounding prose stays visible while ticking items off.
+  const lines = useMemo(() => (checklistMode && listed ? splitBodyLines(body) : []), [checklistMode, listed, body]);
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -116,7 +164,10 @@ export default function NoteEditor() {
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>{isNew && !noteId ? 'Yeni not' : 'Not'}</Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>{isNew && !noteId ? 'Yeni not' : 'Not'}</Text>
+          <SaveIndicator state={saveState} />
+        </View>
         <Pressable
           style={styles.iconButton}
           onPress={confirmDelete}
@@ -140,26 +191,108 @@ export default function NoteEditor() {
               value={title}
               onChangeText={(text) => {
                 setTitle(text);
-                dirty.current = true;
+                markDirty();
               }}
               maxLength={200}
             />
-            <TextInput
-              style={styles.bodyInput}
-              placeholder="Notunu buraya yaz — her şey şifreli saklanır."
-              placeholderTextColor={colors.textDim}
-              value={body}
-              onChangeText={(text) => {
-                setBody(text);
-                dirty.current = true;
-              }}
-              multiline
-              textAlignVertical="top"
-            />
+
+            <View style={styles.toolbar}>
+              <Pressable
+                style={styles.toolButton}
+                onPress={() => edit(appendChecklistItem(body))}
+                accessibilityRole="button"
+                accessibilityLabel="Kontrol listesi maddesi ekle"
+              >
+                <Ionicons name="checkbox-outline" size={18} color={colors.accent} />
+                <Text style={styles.toolLabel}>Madde</Text>
+              </Pressable>
+              {listed && (
+                <>
+                  <Pressable
+                    style={styles.toolButton}
+                    onPress={() => setChecklistMode((v) => !v)}
+                    accessibilityRole="button"
+                    accessibilityLabel={checklistMode ? 'Metin olarak düzenle' : 'Liste olarak göster'}
+                  >
+                    <Ionicons
+                      name={checklistMode ? 'create-outline' : 'list-outline'}
+                      size={18}
+                      color={colors.accent}
+                    />
+                    <Text style={styles.toolLabel}>{checklistMode ? 'Düzenle' : 'Liste'}</Text>
+                  </Pressable>
+                  {progress && (
+                    <Text style={styles.progress}>
+                      {progress.done}/{progress.total}
+                    </Text>
+                  )}
+                </>
+              )}
+            </View>
+
+            {checklistMode && listed ? (
+              <ScrollView contentContainerStyle={{ paddingBottom: spacing.lg }} keyboardShouldPersistTaps="handled">
+                {lines.map((line) =>
+                  line.kind === 'text' ? (
+                    <Text key={line.index} style={line.text.trim() ? styles.plainLine : styles.blankLine}>
+                      {line.text}
+                    </Text>
+                  ) : (
+                    <Pressable
+                      key={line.index}
+                      style={styles.checkRow}
+                      onPress={() => edit(toggleChecklistLine(body, line.index))}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: line.checked }}
+                      accessibilityLabel={line.text || 'Boş madde'}
+                    >
+                      <Ionicons
+                        name={line.checked ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={line.checked ? colors.accent : colors.textDim}
+                      />
+                      <Text style={[styles.checkText, line.checked && styles.checkTextDone]}>{line.text}</Text>
+                    </Pressable>
+                  ),
+                )}
+              </ScrollView>
+            ) : (
+              <TextInput
+                style={styles.bodyInput}
+                placeholder="Notunu buraya yaz — her şey şifreli saklanır."
+                placeholderTextColor={colors.textDim}
+                value={body}
+                onChangeText={edit}
+                multiline
+                textAlignVertical="top"
+              />
+            )}
           </View>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * Autosave was completely invisible. In an app with no recovery path, the user
+ * needs evidence their work landed before they lock the vault.
+ */
+function SaveIndicator({ state }: { state: SaveState }) {
+  if (state === 'idle') return null;
+  const label = state === 'saving' ? 'Kaydediliyor…' : state === 'saved' ? 'Kaydedildi' : 'Kaydedilemedi';
+  const color = state === 'error' ? colors.danger : colors.textDim;
+  return (
+    <View style={styles.saveRow}>
+      {state !== 'saving' && (
+        <Ionicons
+          name={state === 'saved' ? 'checkmark-circle' : 'alert-circle'}
+          size={12}
+          color={color}
+        />
+      )}
+      <Text style={[styles.saveLabel, { color }]}>{label}</Text>
+    </View>
   );
 }
 
@@ -172,9 +305,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.sm,
   },
+  headerCenter: { alignItems: 'center' },
   headerTitle: { color: colors.text, fontSize: 17, fontWeight: '600' },
+  saveRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  saveLabel: { fontSize: 11 },
   iconButton: { width: 44, height: 44, borderRadius: radius.full, alignItems: 'center', justifyContent: 'center' },
   editor: { flex: 1, paddingHorizontal: spacing.md, gap: spacing.sm },
   titleInput: { color: colors.text, fontSize: 22, fontWeight: '700', paddingVertical: spacing.sm },
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  toolButton: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
+  toolLabel: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+  progress: { color: colors.textDim, fontSize: 13, marginLeft: 'auto' },
   bodyInput: { flex: 1, color: colors.text, fontSize: 16, lineHeight: 24 },
+  checkRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, paddingVertical: 8 },
+  checkText: { flex: 1, color: colors.text, fontSize: 16, lineHeight: 22 },
+  checkTextDone: { color: colors.textDim, textDecorationLine: 'line-through' },
+  plainLine: { color: colors.text, fontSize: 16, lineHeight: 22, paddingVertical: 2 },
+  blankLine: { height: spacing.sm },
 });

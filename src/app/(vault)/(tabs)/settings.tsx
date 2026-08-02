@@ -7,11 +7,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getVaultStats, type VaultStats } from '@/lib/db/media-repo';
 import { countNotes } from '@/lib/db/notes-repo';
 import { requireCtx, useIsPrimary, useSession } from '@/stores/session';
-import { AUTO_LOCK_OPTIONS, useSettings } from '@/stores/settings';
+import { AUTO_LOCK_OPTIONS, INACTIVITY_OPTIONS, useSettings } from '@/stores/settings';
 import { colors, formatBytes, radius, spacing } from '@/theme';
 
 export default function SettingsScreen() {
   const autoLockSeconds = useSettings((s) => s.autoLockSeconds);
+  const inactivitySeconds = useSettings((s) => s.inactivitySeconds);
   // The ONLY role question the UI may ask. A decoy session and a post-duress
   // session must render byte-identical screens.
   const isPrimary = useIsPrimary();
@@ -107,6 +108,25 @@ export default function SettingsScreen() {
             >
               <Text style={styles.rowText}>{option.label}</Text>
               {autoLockSeconds === option.seconds && <Ionicons name="checkmark" size={20} color={colors.accent} />}
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>HAREKETSİZLİK KİLİDİ (UYGULAMA AÇIKKEN)</Text>
+          {INACTIVITY_OPTIONS.map((option) => (
+            <Pressable
+              key={option.seconds}
+              style={styles.row}
+              onPress={() =>
+                void useSettings
+                  .getState()
+                  .setInactivitySeconds(option.seconds)
+                  .catch(() => Alert.alert('Hata', 'Ayar kaydedilemedi.'))
+              }
+            >
+              <Text style={styles.rowText}>{option.label}</Text>
+              {inactivitySeconds === option.seconds && <Ionicons name="checkmark" size={20} color={colors.accent} />}
             </Pressable>
           ))}
         </View>

@@ -26,6 +26,7 @@ src/
   app/                    # Expo Router rotaları (yalnızca rota dosyaları)
     _layout.tsx           # kök Stack + Stack.Protected guard'ları + gizlilik örtüsü
     index.tsx             # yönlendirme kapısı (loading → onboarding|lock|vault)
+    +not-found.tsx        # eşleşmeyen rota → hesap makinesi (kamuflaj koruması)
     onboarding.tsx        # PIN belirleme + "kurtarma yok" onayı (yalnızca ilk açılış)
     lock.tsx              # ÇALIŞAN HESAP MAKİNESİ — kamuflaj + giriş yüzeyi
     (vault)/
@@ -45,7 +46,8 @@ src/
                           # format (.enc header), stream (chunked AEAD), fields (DB alanları)
     db/                   # connection (open/migrate, dışa açılmaz), index (meta),
                           # schema, scope (VaultContext), backfill, media-repo, notes-repo
-    media/                # capture (ingest), viewer-cache (decrypt yaşam döngüsü), share
+    media/                # capture (ingest), import (sistem seçicisi),
+                          # viewer-cache (decrypt yaşam döngüsü), share
     base64.ts, paths.ts
   stores/                 # session (kilit durum makinesi + VaultContext), settings
   test/                   # jest shim'leri (quick-crypto→node:crypto, SecureStore, FS,
@@ -109,8 +111,13 @@ rotaları otomatik olarak erişilmez olur.
 Kilit tetikleyicileri:
 - **Arka plan:** `AppState` dinleyicisi (`use-auto-lock`). `autoLockSeconds = 0` ⇒ arka
   plana geçer geçmez kilit; aksi halde dönüşte geçen süreye bakılır.
-- **Hareketsizlik:** vault kökündeki capture-phase responder her dokunuşta 5 dk'lık
-  zamanlayıcıyı sıfırlar (`use-inactivity-lock`).
+- **Hareketsizlik:** vault kökündeki capture-phase responder her dokunuşta son etkinlik
+  zaman damgasını tazeler; `use-inactivity-lock` 15 sn'de bir süreyi kontrol eder. Süre
+  Ayarlar'dan seçilir (`meta.inactivity_seconds`, varsayılan 5 dk).
+  **`session.busy > 0` iken bu sayaç beklemeye alınır** — büyük bir video şifrelemesi
+  dakikalarca sürüyor ve hiç dokunma üretmiyor, araya girmek pipeline'ın hâlâ kullandığı
+  anahtarları sıfırlardı. Kasıtlı kilitler (elle, sallama, ekran görüntüsü, arka plan)
+  etkilenmez.
 - **Elle:** Ayarlar → "Şimdi kilitle".
 - **Ekran görüntüsü:** iOS'ta `useScreenshotListener` (engelleyemiyoruz, algılıyoruz).
 - **Panik hareketi:** sallamak (`use-panic-gesture`; 700 ms içinde iki kez > 2.4 g).
@@ -119,9 +126,22 @@ Kilit tetikleyicileri:
 Uygulama `inactive/background` olduğunda `PrivacyCover` (opak kapak) çizilir; uygulama
 değiştirici ekran görüntüsünde içerik görünmez.
 
+## Hata sınırı
+
+`_layout.tsx` bir `ErrorBoundary` export ediyor: altındaki her render hatasında önce
+`lock()` çağırıp içeriği ekrandan kaldırıyor, sonra hesap makinesini çiziyor ve bir kez
+otomatik retry deniyor. Kırmızı kutu ya da stack trace göstermek kamuflajı anında bozardı.
+`+not-found.tsx` aynı işi eşleşmeyen deep link'ler için yapıyor.
+
 ## Medya hattı
 
 ### Çekim (ingest) — `lib/media/capture.ts`
+
+`insertMediaItem`'dan hemen önce `assertStillCurrent(ctx)` çağrılır: `lock()` context'in
+tamponlarını yerinde sıfırladığı için, araya giren bir kilit satırı sıfır anahtarla
+etiketlenmiş halde yazardı — hiçbir kasaya ait olmayan, görünmez ve kurtarılamaz bir öğe.
+Şimdi temiz bir iptalle sonuçlanıyor ve mevcut `catch` yazılmış ciphertext'i siliyor.
+
 
 ```
 CameraView.takePictureAsync({exif:false}) / recordAsync()

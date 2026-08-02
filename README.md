@@ -35,6 +35,7 @@ npx expo run:android    # Android emülatör / cihaz
 
 | Komut | Açıklama |
 |---|---|
+| `npm run verify` | typecheck + lint + test (CI ile aynı) |
 | `npm test` | Jest birim testleri (kripto çekirdeği: round-trip, tamper, backoff) |
 | `npm run typecheck` | TypeScript kontrolü (`tsc --noEmit`) |
 | `npm run lint` | ESLint |

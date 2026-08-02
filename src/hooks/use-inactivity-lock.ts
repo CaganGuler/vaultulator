@@ -9,8 +9,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import { useSession } from '../stores/session';
+import { useSettings } from '../stores/settings';
 
-const INACTIVITY_MS = 5 * 60 * 1000;
 const CHECK_MS = 15 * 1000;
 
 export function useInactivityLock(): { onUserInteraction: () => boolean } {
@@ -31,7 +31,8 @@ export function useInactivityLock(): { onUserInteraction: () => boolean } {
         lastActivity.current = Date.now();
         return;
       }
-      if (Date.now() - lastActivity.current >= INACTIVITY_MS) lock();
+      const timeoutMs = useSettings.getState().inactivitySeconds * 1000;
+      if (Date.now() - lastActivity.current >= timeoutMs) lock();
     }, CHECK_MS);
     return () => clearInterval(interval);
   }, []);

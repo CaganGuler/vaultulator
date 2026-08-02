@@ -19,7 +19,7 @@ Kamera çekim temp'leri expo-camera'nın kendi cache konumuna düşer ve ingest 
 
 ```sql
 CREATE TABLE meta (            -- düz key-value: schema dışı ayarlar
-  key   TEXT PRIMARY KEY,      -- örn. autolock_seconds
+  key   TEXT PRIMARY KEY,      -- autolock_seconds, inactivity_seconds
   value TEXT NOT NULL
 );
 
@@ -87,8 +87,9 @@ Tasarım kararları:
   öğe sayısı/boyutu/zamanı. İçerik sızmaz. (SECURITY.md → sınırlar #5)
 - **Alan şifreleme AAD'si** `"notes:<rowId>:<kolon>"` — BLOB başka satıra/kolona
   kopyalanırsa açılmaz.
-- **`meta` kasalar arasında paylaşılır.** İçindeki tek şey `autolock_seconds` ve iki kasada
-  aynı davranması *istenen* şeydir: farklı auto-lock süresi bir ipucu olurdu.
+- **`meta` kasalar arasında paylaşılır.** İçinde yalnızca kilit süreleri var
+  (`autolock_seconds`, `inactivity_seconds`) ve iki kasada aynı davranmaları *istenen*
+  şeydir: farklı bir kilit süresi bir ipucu olurdu.
 - **`PRAGMA secure_delete = ON`** — silinen satırlar freelist/WAL sayfalarında kalmasın
   (silinmiş bir yem kasa dosyadan kurtarılabilmemeli).
 

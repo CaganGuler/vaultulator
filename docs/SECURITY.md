@@ -29,6 +29,11 @@ olmadığından, uygulama dosyalarını veya bir yedeği ele geçiren saldırgan
 sahip olsa bile KEK'i türetemez — kaba kuvvet fiziksel, kilidi açılabilir cihaz olmadan
 imkânsızdır.
 
+**Her PIN doğrulaması ölçülür.** Backoff kapısı ve deneme sayacı `keys.ts` içindeki tek
+bir `attemptPin()`'de; `unlockVault`, `changePin` ve `verifyPinForRole` üçü de oradan geçer.
+Çağıranın atlayabileceği bir yerde olsaydı, kilidi açılmış bir oturum sınırsız tahmin
+oracle'ı olurdu — zorlama altındaki bir yem oturumu için tam da olmaması gereken şey.
+
 **PIN doğrulaması = GCM tag kontrolü.** Slot yanlış KEK ile açılınca auth tag tutmaz →
 `WrongPinError`. Ayrı bir doğrulayıcı blob yoktur. Çok slotlu kasayı doğal kılan da bu:
 "PIN doğru mu" sorusu zaten "hangi slot açılıyor" sorusuyla aynı şey.
@@ -65,6 +70,13 @@ düzeni `docs/DATA-MODEL.md`'de; buradaki konu güvenlik özellikleri.
 DEK_decoy)`. Gerçek oturum yemin PIN'ini, yemin PIN'ini bilmeden değiştirebilir; yem
 oturumunda ters bir escrow yoktur, yani `DEK_primary`'ye hiçbir yoldan ulaşılamaz. İstenen
 asimetri budur: yem yalnızca kendi PIN'ini değiştirir, gerçek kasa ikisini de yönetir.
+
+**Yem oturumu "PIN değiştir" ekranından hiçbir şey öğrenemez.** Yeni PIN başka bir slota
+aitse bu, sıradan bir yanlış PIN olarak raporlanır ve iki KEK de karar verilmeden önce
+türetilir, yani ret her durumda aynı süreyi alır. Aksi halde ekran üç ayırt edilebilir
+cevap verirdi ve bu tek başına gerçek kasanın varlığını kanıtlar, PIN'ini sayarak
+buldurtur ve panik PIN'inin kurulu olduğunu açık ederdi. Ana kasada çakışma açıkça
+söylenir — orada gizlenecek bir şey yok.
 
 **Rol, ayar değil anahtar malzemesidir.** Rol baytı GCM ile doğrulanan payload'ın içindedir
 ve slot konumuyla eşleşmek zorundadır; yem oturumundaki biri onu değiştiremez. Arayüzün
@@ -163,15 +175,26 @@ taşınırsa doğrulama tutmaz.
    PIN'inden sonra ölü satırlar ve çözülemez dosyalar yerinde kalır. Hiçbiri VeraCrypt tarzı
    önceden ayrılmış gizli bölüm olmadan giderilemez ve bu uygulamada pratik değildir.
 
-8. **Boş bir yem kasa en büyük ele veren şeydir.** Kripto burada yardım edemez: yemi
+   Kapatamadığımız iki kanal daha: **(a)** kapsam JS tarafında yapıldığı için galeri her
+   açılışta *her iki* kasanın satırlarını çekip süzüyor — yani yem oturumunun yüklenme
+   süresi gerçek kasanın satır sayısıyla birlikte artıyor ve diğer kasanın id/boyut/zaman
+   verisi (içeriği değil) o an yem oturumunun JS heap'inde bulunuyor. **(b)** pepper
+   SecureStore'dan JS **string** olarak geliyor; string'ler sıfırlanamaz.
+
+8. **İçe aktarılan içeriğin orijinali galeride kalır.** İçe aktarma sistem seçicisini
+   (`expo-image-picker`) kullanır; bu `expo-media-library` değildir, galeriye yazma yolu
+   açmaz ve iOS'ta galeri izni istemez — ama aynı sebeple uygulama **orijinali silemez**.
+   Kullanıcı galeriden kendisi silmediği sürece kasadaki kopya bir sır değildir. Arayüz
+   içe aktarma sonrası bunu açıkça söyler.
+9. **Boş bir yem kasa en büyük ele veren şeydir.** Kripto burada yardım edemez: yemi
    inandırıcı içerikle doldurmak kullanıcının işidir. Arayüz bunu hatırlatır.
-9. **Panik PIN'inin geri dönüşü yoktur.** Yanlışlıkla girilirse gerçek kasa gider. Kurulumda
+10. **Panik PIN'inin geri dönüşü yoktur.** Yanlışlıkla girilirse gerçek kasa gider. Kurulumda
    çift giriş, kendi PIN'iyle onay ve gerçek PIN'e bir hane uzaklıktaki PIN'lerin reddi
    var; bunlar riski azaltır, ortadan kaldırmaz.
-10. **Kamuflajın sınırı var.** Hesap makinesi kamera ve mikrofon izni istiyor ve iOS
+11. **Kamuflajın sınırı var.** Hesap makinesi kamera ve mikrofon izni istiyor ve iOS
     Ayarlar → Gizlilik altında öyle görünüyor. İzin metinleri "fiş/belge tarama" gerekçesine
     çevrildi; bu makul kılar, tamamen gizlemez.
-11. **Hesap makinesi yanlış PIN'de sessizdir.** Bunun bedeli gerçek kullanıcıya çıkar:
+12. **Hesap makinesi yanlış PIN'de sessizdir.** Bunun bedeli gerçek kullanıcıya çıkar:
     "yanlış mı yazdım yoksa backoff kilidinde miyim" ayrımını göremez. Bu ayrımı gösteren
     her şey, yabancıya da hesap makinesinin bir kapı olduğunu söylerdi.
 

@@ -10,11 +10,15 @@ hesap makinesidir; PIN yazıp `=` ile açılır. Ayrı bir PIN **yem kasayı** (
 ## Komutlar
 
 ```bash
+npm run verify        # typecheck + lint + test (coverage eşikleriyle) — CI ile aynı komut
 npm test              # jest (kripto testleri node:crypto shim'iyle koşar)
 npm run typecheck     # tsc --noEmit
 npm run lint          # eslint
 npx expo prebuild     # native projeleri üret/güncelle
 ```
+
+Commit öncesi `npm run verify` geçmeli; husky pre-commit (değişen dosyalarda lint +
+typecheck) ve pre-push (tam verify) bunu zorluyor, GitHub Actions da aynısını koşuyor.
 
 ## Değişmezler (invariants) — asla ihlal etme
 
@@ -44,7 +48,10 @@ npx expo prebuild     # native projeleri üret/güncelle
    `decoy` ile `duress` oturumları ekranda birebir aynı görünmek zorundadır — ikisini ayıran
    herhangi bir ekran, panik PIN'inin varlığını ele verir. Aynı sebeple kilitli ekran yanlış
    PIN'de hiçbir geri bildirim vermez.
-9. **`bundleIdentifier` değiştirilmez.** Değiştirmek iOS'ta yeni bir uygulama demektir;
+9. **Her PIN doğrulaması `attemptPin`'den geçer.** Backoff kapısı ve deneme sayacı
+   `keys.ts`'te tek bir yerdedir. PIN doğrulayan yeni bir yol eklerken onu atlama —
+   ölçülmeyen bir yol, kilidi açılmış bir oturumda sınırsız tahmin oracle'ıdır.
+10. **`bundleIdentifier` değiştirilmez.** Değiştirmek iOS'ta yeni bir uygulama demektir;
    Keychain'deki pepper erişilemez hale gelir ve cihazdaki kasa kalıcı olarak kaybolur.
    Yeniden imzalama da **aynı sertifika/team** ile yapılmalıdır.
 
@@ -60,10 +67,16 @@ npx expo prebuild     # native projeleri üret/güncelle
 
 `package.json → jest.moduleNameMapper`: `react-native-quick-crypto` → `src/test/quick-crypto-node-shim.ts`
 (node:crypto; argon2 yerine DETERMİNİSTİK scrypt taklidi — güvenlik değil mantık testi),
-`expo-secure-store` → bellek içi mock, `expo-file-system` → stub, `expo-sqlite` →
+`expo-secure-store` → bellek içi mock, `expo-sqlite` →
 `node:sqlite` (GERÇEK SQL, böylece migration/BLOB/rollback davranışı cihazdakiyle aynı),
-`expo-crypto` → `node:crypto`. Stream testleri dosya yerine `bytesReader/bytesWriter`
-bellek adaptörlerini kullanır.
+`expo-crypto` → `node:crypto`, `expo-sharing` → çağrı kaydeden mock. **`expo-file-system`
+bellek içi bir dosya sistemidir** (gerçek okuma/yazma, dizin listeleme, kısmi okuma
+simülasyonu) — inert bir stub, `sweepOrphanFiles` gibi testleri sessizce boşa geçirir.
+Stream testleri hem bellek adaptörlerini hem dosya adaptörlerini kapsar.
+
+Coverage `collectCoverageFrom` ile bütün `src`'yi sayar (mock'lar hariç) ve dizin başına
+eşikler vardır: `src/lib/crypto` ve `src/lib/db` neredeyse tam kapsam tutmak zorundadır —
+invariant #6'yı zorunlu kılan mekanizma budur.
 
 ## Dokümantasyon senkronu
 

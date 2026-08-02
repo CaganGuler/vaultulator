@@ -99,7 +99,12 @@ export default function MediaViewer() {
   return (
     <View style={styles.container}>
       {item?.type === 'photo' && photoUri && (
-        <Image source={{ uri: photoUri }} style={StyleSheet.absoluteFill} contentFit="contain" />
+        <Image
+          source={{ uri: photoUri }}
+          style={StyleSheet.absoluteFill}
+          contentFit="contain"
+          cachePolicy="memory" // decrypted plaintext — never to disk (invariant #2)
+        />
       )}
       {item?.type === 'video' && videoUri && <VideoPlayerView uri={videoUri} />}
       {notFound && (

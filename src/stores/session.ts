@@ -15,6 +15,7 @@
  *
  * There is no in-place vault switch: changing role always goes through lock().
  */
+import { Image } from 'expo-image';
 import { create } from 'zustand';
 
 import {
@@ -107,6 +108,12 @@ export const useSession = create<SessionState>((set, get) => ({
 
   async init() {
     wipeDecryptedDir(); // covers temp files left behind by a crash / force kill
+    // One-time cleanup of a real leak: until cachePolicy was pinned to
+    // 'memory', expo-image persisted every decrypted thumbnail and photo into
+    // SDWebImage's / Glide's own disk cache — outside <cache>/decrypted/, and
+    // wiped by nothing. The app is fully offline, so there is no legitimate
+    // remote image in that cache to lose.
+    void Image.clearDiskCache().catch(() => undefined);
     ensureVaultDirs();
     const exists = await vaultExists();
     const attempts = exists ? await getAttempts() : { count: 0, lockUntil: 0 };
@@ -161,8 +168,14 @@ export const useSession = create<SessionState>((set, get) => ({
   lock() {
     const { ctx, status } = get();
     if (status !== 'unlocked') return;
-    wipeDecryptedDir();
+    // A leftover here means plaintext survived a lock — invariant #2. paths.ts
+    // reports survivors rather than swallowing the failure, so retry once
+    // before giving up; a writer may still have held a handle.
+    if (wipeDecryptedDir().length > 0) wipeDecryptedDir();
     clearThumbCache();
+    // Without this the decoded bitmap of every thumbnail viewed this session
+    // stays in expo-image's native memory cache after the vault is locked.
+    void Image.clearMemoryCache().catch(() => undefined);
     zeroizeContext(ctx);
     set({ status: 'locked', ctx: null });
   },

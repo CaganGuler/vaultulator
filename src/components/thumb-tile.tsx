@@ -27,8 +27,15 @@ export function ThumbTile({ item, size, onPress, onLongPress, selecting, selecte
       accessibilityState={selecting ? { checked: selected } : undefined}
       accessibilityLabel={`${kind}, ${formatDate(item.createdAt)}`}
     >
+      {/* Decrypted plaintext below: memory-only, never persisted (invariant #2). */}
       {uri ? (
-        <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
+        <Image
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          transition={120}
+          cachePolicy="memory"
+        />
       ) : (
         <View style={styles.placeholder} />
       )}

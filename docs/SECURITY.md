@@ -204,6 +204,16 @@ taşınırsa doğrulama tutmaz.
   verisi içermez. FLAG_SECURE vault rotalarında aktif.
 - **iOS:** `com.apple.developer.default-data-protection = NSFileProtectionComplete`
   entitlement'ı; Keychain girdileri `WHEN_UNLOCKED_THIS_DEVICE_ONLY`.
+- **Görüntü önbelleği bellekte tutulur.** `expo-image`'ın `cachePolicy` varsayılanı
+  `'disk'` ve bu, çözülmüş küçük resimlerle fotoğrafların SDWebImage (iOS) / Glide
+  (Android) önbelleklerine — yani `<cache>/decrypted/` **dışına**, kilitte ve açılışta
+  silinmeyen bir yere — yazılması demekti. Bir sürüm boyunca öyle gitti ve invariant #2'nin
+  doğrudan ihlaliydi. Artık her `<Image>` `cachePolicy="memory"` kullanıyor, `lock()`
+  bellek önbelleğini de boşaltıyor ve açılışta bir kez `clearDiskCache()` çağrılarak eski
+  sürümlerin bıraktığı ne varsa temizleniyor. `useImage()` / `Image.loadAsync()`
+  kullanılmıyor: onlar disk önbelleğini sabit kodluyor ve geçersiz kılınamıyor.
+  Bir test (`src/components/__tests__/image-cache-policy.test.ts`) her `<Image>`'ın bu
+  prop'u taşıdığını doğruluyor.
 - **Galeri izolasyonu yapısaldır:** `expo-media-library` paketi kurulu bile değildir;
   koda galeriye yazma yolu eklemek bağımlılık eklemeyi gerektirir (PR'da görünür).
 - **Kimlik:** uygulama ana ekranda "Hesap Makinesi" adı ve hesap makinesi ikonuyla durur;

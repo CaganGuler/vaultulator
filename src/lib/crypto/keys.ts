@@ -248,8 +248,9 @@ function trialSlots(kek: Uint8Array, rec: VaultRecord): UnlockedSlot | null {
   const matches: UnlockedSlot[] = [];
   for (let i = 0; i < SLOT_COUNT; i++) {
     const role = ROLE_FOR_SLOT[i];
-    if (!role) continue; // reserved slot is always filler
-    const dek = openSlot(kek, rec.slots[i], role);
+    const slot = rec.slots[i];
+    if (!role || !slot) continue; // reserved slot is always filler
+    const dek = openSlot(kek, slot, role);
     if (dek) matches.push({ dek, role, slotIndex: i });
   }
   // Two slots opening under one KEK means two roles share a PIN: fail closed
@@ -265,8 +266,9 @@ function trialSlots(kek: Uint8Array, rec: VaultRecord): UnlockedSlot | null {
 function assertPinFree(kek: Uint8Array, rec: VaultRecord, exceptIndex: number): void {
   for (let i = 0; i < SLOT_COUNT; i++) {
     const role = ROLE_FOR_SLOT[i];
-    if (!role || i === exceptIndex) continue;
-    const dek = openSlot(kek, rec.slots[i], role);
+    const slot = rec.slots[i];
+    if (!role || !slot || i === exceptIndex) continue;
+    const dek = openSlot(kek, slot, role);
     if (dek) {
       zeroize(dek);
       throw new PinInUseError();
@@ -306,7 +308,7 @@ function openEscrow(dekPrimary: Uint8Array, escrow: Uint8Array): EscrowContent |
   try {
     const payload = gcmOpen(kEsc, escrow.subarray(0, GCM_IV_LEN), escrow.subarray(GCM_IV_LEN), ESCROW_AAD);
     if (payload.length !== ESCROW_PAYLOAD_LEN) throw new VaultCorruptError('Escrow içeriği bozuk');
-    return { flags: payload[0], dekDecoy: payload.subarray(1) };
+    return { flags: payload[0] ?? 0, dekDecoy: payload.subarray(1) };
   } catch (e) {
     if (e instanceof IntegrityError) return null;
     throw e;
@@ -757,7 +759,7 @@ export interface AttemptState {
 const BACKOFF_MS = [0, 0, 0, 30_000, 60_000, 300_000, 900_000, 3_600_000];
 
 export function backoffForCount(count: number): number {
-  return BACKOFF_MS[Math.min(count, BACKOFF_MS.length - 1)];
+  return BACKOFF_MS[Math.min(Math.max(count, 0), BACKOFF_MS.length - 1)] ?? 0;
 }
 
 export async function getAttempts(): Promise<AttemptState> {

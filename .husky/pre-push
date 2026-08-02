@@ -1,0 +1,2 @@
+# The same command CI runs, so a red build is never a surprise.
+npm run verify

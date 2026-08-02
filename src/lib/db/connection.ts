@@ -22,9 +22,11 @@ async function openAndMigrate(): Promise<SQLite.SQLiteDatabase> {
     // One transaction per migration. v2 is two ALTER TABLEs: without this, a
     // failure on the second would leave user_version un-bumped, and the next
     // launch would re-run the first and hit "duplicate column name" forever.
+    const migration = MIGRATIONS[v];
+    if (!migration) throw new Error(`Migration ${v} eksik`);
     await database.execAsync('BEGIN');
     try {
-      await database.execAsync(MIGRATIONS[v]);
+      await database.execAsync(migration);
       await database.execAsync(`PRAGMA user_version = ${v + 1}`);
       await database.execAsync('COMMIT');
     } catch (e) {

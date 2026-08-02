@@ -8,7 +8,6 @@
     "scheme": "hesapmakinesi",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#131A26",
-    "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.caganguler.secretvault",
       "supportsTablet": false,

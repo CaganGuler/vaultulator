@@ -70,13 +70,13 @@ describe('stream tamper resistance', () => {
 
   it('rejects a flipped ciphertext byte', async () => {
     const sealed = await encrypt(dek, 'item-1', randomBytes(3 * CHUNK));
-    sealed[HEADER_LEN + 5] ^= 0xff;
+    sealed[HEADER_LEN + 5] = (sealed[HEADER_LEN + 5] ?? 0) ^ 0xff;
     await expect(decrypt(dek, 'item-1', sealed)).rejects.toThrow(IntegrityError);
   });
 
   it('rejects a flipped header byte (AAD binding)', async () => {
     const sealed = await encrypt(dek, 'item-1', randomBytes(CHUNK));
-    sealed[HEADER_LEN - 1] ^= 0x01; // reserved byte is part of the AAD
+    sealed[HEADER_LEN - 1] = (sealed[HEADER_LEN - 1] ?? 0) ^ 0x01; // reserved byte is part of the AAD
     await expect(decrypt(dek, 'item-1', sealed)).rejects.toThrow(IntegrityError);
   });
 
@@ -197,7 +197,7 @@ describe('file adapters', () => {
     await encryptFile({ dek, itemId: 'item-1', sourceUri: src, destUri: enc });
 
     const sealed = read(enc);
-    sealed[HEADER_LEN + 10] ^= 0x01;
+    sealed[HEADER_LEN + 10] = (sealed[HEADER_LEN + 10] ?? 0) ^ 0x01;
     writeFile(enc, sealed);
 
     await expect(decryptFile({ dek, itemId: 'item-1', sourceUri: enc, destUri: out })).rejects.toThrow(IntegrityError);

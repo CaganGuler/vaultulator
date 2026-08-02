@@ -70,7 +70,7 @@ function escrowOf(record: Uint8Array): Uint8Array {
 /** Flips one bit at `offset`, returning a fresh buffer. */
 function flipBit(record: Uint8Array, offset: number): Uint8Array {
   const copy = Uint8Array.from(record);
-  copy[offset] ^= 0x01;
+  copy[offset] = (copy[offset] ?? 0) ^ 0x01;
   return copy;
 }
 

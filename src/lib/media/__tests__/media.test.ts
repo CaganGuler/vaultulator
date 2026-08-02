@@ -62,8 +62,8 @@ describe('shareMediaItem', () => {
     await shareMediaItem(dek, it);
 
     expect(shareCalls).toHaveLength(1);
-    expect(shareCalls[0].mimeType).toBe('image/jpeg');
-    expect(new File(shareCalls[0].uri).exists).toBe(false);
+    expect(shareCalls[0]?.mimeType).toBe('image/jpeg');
+    expect(new File(shareCalls[0]!.uri).exists).toBe(false);
   });
 
   it('deletes the plaintext even when sharing fails', async () => {
@@ -78,15 +78,17 @@ describe('shareMediaItem', () => {
   });
 
   it('picks the extension from the media type', async () => {
-    for (const [it, ext] of [
+    const cases = [
       [item('p'), 'jpg'],
       [item('q', { type: 'video', mime: 'video/quicktime' }), 'mov'],
       [item('r', { type: 'video', mime: 'video/mp4' }), 'mp4'],
-    ] as const) {
+    ] as const;
+
+    for (const [it, ext] of cases) {
       await seed(it);
       await shareMediaItem(dek, it);
+      expect(shareCalls.at(-1)?.uri).toBe(decryptedFileUri(`export-${it.id}.${ext}`));
     }
-    expect(shareCalls.map((c) => c.uri.split('.').pop())).toEqual(['jpg', 'mov', 'mp4']);
   });
 });
 

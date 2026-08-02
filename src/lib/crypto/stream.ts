@@ -176,7 +176,7 @@ function fileReader(uri: string): ByteReader {
         got += chunk.length;
       }
       offset += got;
-      return parts.length === 1 ? parts[0] : concatBytes(...parts);
+      return parts.length === 1 ? parts[0]! : concatBytes(...parts);
     },
     close: () => handle.close(),
   };

@@ -113,6 +113,14 @@ export async function setCaption(ctx: VaultContext, id: string, caption: string)
   );
 }
 
+let cachedIndex: Map<string, string> | null = null;
+
+/** Drops the in-memory plaintext captions. Called from lock(). */
+export function clearCaptionIndex(): void {
+  cachedIndex?.clear();
+  cachedIndex = null;
+}
+
 /**
  * Every owned caption, decrypted once.
  *
@@ -128,6 +136,7 @@ export async function loadCaptionIndex(ctx: VaultContext): Promise<Map<string, s
     const caption = decodeText(ctx, row.id, 'caption', row.caption_enc);
     if (caption) index.set(row.id, caption);
   }
+  cachedIndex = index;
   return index;
 }
 

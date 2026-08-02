@@ -36,7 +36,7 @@ import { zeroize } from '../lib/crypto/primitives';
 import { destroyDb } from '../lib/db';
 import { backfillRowTags } from '../lib/db/backfill';
 import { deleteAllAlbumsOf } from '../lib/db/albums-repo';
-import { deleteAllMediaOf, listAllReferencedFiles } from '../lib/db/media-repo';
+import { clearCaptionIndex, deleteAllMediaOf, listAllReferencedFiles } from '../lib/db/media-repo';
 import { deleteAllNotesOf } from '../lib/db/notes-repo';
 import type { VaultContext } from '../lib/db/scope';
 import { forgetPhotoTemps } from '../lib/media/photo-cache';
@@ -176,6 +176,7 @@ export const useSession = create<SessionState>((set, get) => ({
     if (wipeDecryptedDir().length > 0) wipeDecryptedDir();
     clearThumbCache();
     forgetPhotoTemps(); // the files are gone; drop the index that points at them
+    clearCaptionIndex(); // plaintext captions must not outlive the session
     // Without this the decoded bitmap of every thumbnail viewed this session
     // stays in expo-image's native memory cache after the vault is locked.
     void Image.clearMemoryCache().catch(() => undefined);

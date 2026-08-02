@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/empty-state';
@@ -9,7 +9,7 @@ import { ProgressOverlay } from '@/components/progress-overlay';
 import { ThumbTile } from '@/components/thumb-tile';
 import { useMediaItems } from '@/hooks/use-media-items';
 import { addItemsToAlbum, listAlbumSummaries } from '@/lib/db/albums-repo';
-import { deleteMediaItem, type MediaItem } from '@/lib/db/media-repo';
+import { deleteMediaItem, loadCaptionIndex, type MediaItem } from '@/lib/db/media-repo';
 import { applyGalleryOrder, type MediaFilter, serializeOrder } from '@/lib/media/gallery-order';
 import {
   importAssets,
@@ -40,9 +40,20 @@ export default function GalleryScreen() {
   const [oldestFirst, setOldestFirst] = useState(false);
   const [selection, setSelection] = useState<Set<string> | null>(null);
   const [importing, setImporting] = useState<ImportProgress | null>(null);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [captionIndex, setCaptionIndex] = useState<Map<string, string> | null>(null);
 
   // Shared with the viewer so both screens page through the same list.
-  const visible = useMemo(() => applyGalleryOrder(items, filter, oldestFirst), [items, filter, oldestFirst]);
+  const ordered = useMemo(() => applyGalleryOrder(items, filter, oldestFirst), [items, filter, oldestFirst]);
+
+  // Captions are decrypted once when search opens, never per keystroke — the
+  // gallery's list query does no crypto at all and should stay that way.
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase('tr-TR');
+    if (!needle || !captionIndex) return ordered;
+    return ordered.filter((item) => (captionIndex.get(item.id) ?? '').toLocaleLowerCase('tr-TR').includes(needle));
+  }, [ordered, query, captionIndex]);
 
   const selecting = selection !== null;
   const selectedCount = selection?.size ?? 0;
@@ -54,6 +65,14 @@ export default function GalleryScreen() {
       else next.add(id);
       return next;
     });
+  };
+
+  const openSearch = () => {
+    setSearching(true);
+    if (captionIndex) return;
+    void loadCaptionIndex(requireCtx())
+      .then(setCaptionIndex)
+      .catch(() => setCaptionIndex(new Map()));
   };
 
   const runImport = (source: 'media' | 'documents') => {
@@ -198,9 +217,37 @@ export default function GalleryScreen() {
             </Pressable>
           </View>
         ) : (
-          <Text style={styles.count}>{visible.length > 0 ? `${visible.length} öğe` : ''}</Text>
+          <View style={styles.headerActions}>
+            <Text style={styles.count}>{visible.length > 0 ? `${visible.length} öğe` : ''}</Text>
+            {items.length > 0 && (
+              <Pressable
+                onPress={() => (searching ? (setSearching(false), setQuery('')) : openSearch())}
+                accessibilityRole="button"
+                accessibilityLabel={searching ? 'Aramayı kapat' : 'Açıklamalarda ara'}
+              >
+                <Ionicons name={searching ? 'close' : 'search'} size={20} color={colors.textDim} />
+              </Pressable>
+            )}
+          </View>
         )}
       </View>
+
+      {searching && !selecting && (
+        <View style={styles.searchBox}>
+          <Ionicons name="search" size={16} color={colors.textDim} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Açıklamalarda ara"
+            placeholderTextColor={colors.textDim}
+            value={query}
+            onChangeText={setQuery}
+            autoFocus
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Açıklamalarda ara"
+          />
+        </View>
+      )}
 
       {!selecting && items.length > 0 && (
         <View style={styles.filterRow}>
@@ -234,7 +281,11 @@ export default function GalleryScreen() {
           subtitle="Kamerayla çek ya da galeriden içeri al. Çekilenler cihaz galerisine hiç düşmeden şifrelenir."
         />
       ) : !loading && visible.length === 0 ? (
-        <EmptyState icon="funnel-outline" title="Eşleşen yok" subtitle="Bu filtreye uyan içerik yok." />
+        <EmptyState
+          icon={query ? 'search-outline' : 'funnel-outline'}
+          title="Eşleşen yok"
+          subtitle={query ? 'Farklı bir arama dene.' : 'Bu filtreye uyan içerik yok.'}
+        />
       ) : (
         <FlatList
           data={visible}
@@ -330,6 +381,17 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: colors.accentDim },
   chipText: { color: colors.textDim, fontSize: 13 },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  searchInput: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 10 },
   chipTextActive: { color: colors.accent, fontWeight: '600' },
   fabColumn: { position: 'absolute', right: spacing.lg, bottom: spacing.lg, gap: spacing.sm, alignItems: 'center' },
   fab: {

@@ -15,6 +15,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -23,7 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PhotoPage } from '@/components/media/photo-page';
 import { DocumentPage } from '@/components/media/document-page';
 import { VideoPage } from '@/components/media/video-page';
-import { deleteMediaItem, getMediaText, type MediaItem } from '@/lib/db/media-repo';
+import { deleteMediaItem, getMediaText, setCaption, type MediaItem } from '@/lib/db/media-repo';
 import { useGalleryPage } from '@/hooks/use-gallery-page';
 import type { MediaFilter } from '@/lib/media/gallery-order';
 import { clearPhotoTemps, evictPhoto, getPhotoFileUri, prefetchPhotos, setPinnedPhotos } from '@/lib/media/photo-cache';
@@ -56,6 +57,9 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [names, setNames] = useState<Record<string, string>>({});
+  const [captions, setCaptions] = useState<Record<string, string>>({});
+  const [editingCaption, setEditingCaption] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState('');
 
   const listRef = useRef<FlatList<MediaItem>>(null);
 
@@ -89,11 +93,18 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
         .catch(() => undefined);
     }
 
-    // Documents need their original filename, which is encrypted per row.
-    if (focused.type === 'document' && names[focused.id] === undefined) {
+    // Caption and, for documents, the original filename — both encrypted per
+    // row and deliberately not decrypted by the list query.
+    if (captions[focused.id] === undefined) {
       void getMediaText(ctx, focused.id)
-        .then((text) => setNames((prev) => ({ ...prev, [focused.id]: text?.originalName ?? '' })))
-        .catch(() => setNames((prev) => ({ ...prev, [focused.id]: '' })));
+        .then((text) => {
+          setCaptions((prev) => ({ ...prev, [focused.id]: text?.caption ?? '' }));
+          setNames((prev) => ({ ...prev, [focused.id]: text?.originalName ?? '' }));
+        })
+        .catch(() => {
+          setCaptions((prev) => ({ ...prev, [focused.id]: '' }));
+          setNames((prev) => ({ ...prev, [focused.id]: '' }));
+        });
     }
 
     if (focused.type === 'photo' && !uris[focused.id]) {
@@ -104,6 +115,16 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
     prefetchPhotos(ctx, window);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- uris/thumbs are caches, not inputs
   }, [items, index]);
+
+  const saveCaption = () => {
+    setEditingCaption(false);
+    if (!current) return;
+    const next = captionDraft.trim();
+    if (next === (captions[current.id] ?? '')) return;
+    const id = current.id;
+    setCaptions((prev) => ({ ...prev, [id]: next }));
+    void setCaption(requireCtx(), id, next).catch(() => Alert.alert('Hata', 'Açıklama kaydedilemedi.'));
+  };
 
   const confirmShare = () => {
     if (!current) return;
@@ -226,6 +247,38 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
               </Text>
             )}
           </View>
+          <View style={styles.captionRow}>
+            {editingCaption ? (
+              <TextInput
+                style={styles.captionInput}
+                value={captionDraft}
+                onChangeText={setCaptionDraft}
+                placeholder="Açıklama ekle"
+                placeholderTextColor={colors.textDim}
+                autoFocus
+                maxLength={200}
+                returnKeyType="done"
+                onSubmitEditing={saveCaption}
+                onBlur={saveCaption}
+                accessibilityLabel="Açıklama"
+              />
+            ) : (
+              <Pressable
+                style={styles.captionPress}
+                onPress={() => {
+                  setCaptionDraft(current ? (captions[current.id] ?? '') : '');
+                  setEditingCaption(true);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Açıklamayı düzenle"
+              >
+                <Ionicons name="pricetag-outline" size={14} color={colors.textDim} />
+                <Text style={styles.caption} numberOfLines={2}>
+                  {(current && captions[current.id]) || 'Açıklama ekle'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
           <View style={styles.bottomRow}>
             {canShareOut() && (
               <Pressable
@@ -264,6 +317,17 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
   },
   meta: { color: colors.textDim, fontSize: 13 },
+  captionRow: { paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
+  captionPress: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  caption: { color: colors.text, fontSize: 14, flex: 1 },
+  captionInput: {
+    color: colors.text,
+    fontSize: 14,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
   bottomRow: { flexDirection: 'row', justifyContent: 'space-around', paddingBottom: spacing.md },
   iconButton: {
     width: 44,

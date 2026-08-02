@@ -74,6 +74,28 @@ function flipBit(record: Uint8Array, offset: number): Uint8Array {
   return copy;
 }
 
+const ROLE_BYTE = { primary: 0x01, decoy: 0x02, duress: 0x03 } as const;
+
+/**
+ * Builds a slot the library would refuse to build — same shape, chosen PIN and
+ * role — so tests can reach fail-closed paths that the public API prevents.
+ */
+async function forgeSlot(pin: string, role: keyof typeof ROLE_BYTE, dek: Uint8Array): Promise<Uint8Array> {
+  const record = await readRecord();
+  const pinSalt = record.subarray(1, 1 + 16);
+  const pepper = base64Decode((await SecureStore.getItemAsync('vault.pepper'))!);
+  const params = JSON.parse((await SecureStore.getItemAsync('vault.kdfParams'))!) as {
+    memoryKiB: number;
+    passes: number;
+    parallelism: number;
+  };
+
+  const kek = await argon2id(utf8Encode(pin.normalize('NFKC')), pinSalt, pepper, params);
+  const payload = concatBytes(Uint8Array.of(0x01, ROLE_BYTE[role]), dek);
+  const iv = randomBytes(GCM_IV_LEN);
+  return concatBytes(iv, gcmSeal(kek, iv, payload, utf8Encode('vault/slot/v1')));
+}
+
 beforeEach(() => __reset());
 
 describe('slot round-trips', () => {
@@ -448,16 +470,21 @@ describe('tamper resistance', () => {
     await expect(unlockVault(PRIMARY_PIN)).rejects.toThrow(VaultCorruptError);
   });
 
-  it('fails closed when two slots share a KEK', async () => {
+  it('fails closed when two slots genuinely share a KEK', async () => {
     const primaryDek = await createVault(PRIMARY_PIN);
     await enableDecoy(primaryDek, DECOY_PIN);
 
-    // Hand-craft the collision the API refuses to create.
+    // Copying the primary slot into the decoy position is NOT enough: it trips
+    // the role/position check and never reaches the multi-match branch. The
+    // collision has to be forged properly — same KEK, but carrying the role
+    // byte its new position expects.
     const record = Uint8Array.from(await readRecord());
-    record.set(slotOf(record, SLOT_PRIMARY), SLOT_BASE + SLOT_DECOY * SLOT_LEN);
+    record.set(await forgeSlot(PRIMARY_PIN, 'decoy', randomBytes(32)), SLOT_BASE + SLOT_DECOY * SLOT_LEN);
     await writeRecord(record);
 
-    await expect(unlockVault(PRIMARY_PIN)).rejects.toThrow(VaultCorruptError);
+    // Two slots now open under one KEK. Which vault a coerced PIN reaches must
+    // not come down to slot order, so refuse outright.
+    await expect(unlockVault(PRIMARY_PIN)).rejects.toThrow(/Birden fazla slot/);
   });
 });
 

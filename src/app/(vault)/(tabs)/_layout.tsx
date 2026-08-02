@@ -22,6 +22,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="albums"
+        options={{
+          title: 'Albümler',
+          tabBarIcon: ({ color, size }) => <Ionicons name="albums" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="notes"
         options={{
           title: 'Notlar',

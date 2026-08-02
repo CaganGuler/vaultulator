@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/empty-state';
 import { ProgressOverlay } from '@/components/progress-overlay';
 import { ThumbTile } from '@/components/thumb-tile';
 import { useMediaItems } from '@/hooks/use-media-items';
+import { addItemsToAlbum, listAlbumSummaries } from '@/lib/db/albums-repo';
 import { deleteMediaItem, type MediaItem } from '@/lib/db/media-repo';
 import { applyGalleryOrder, type MediaFilter, serializeOrder } from '@/lib/media/gallery-order';
 import {
@@ -102,6 +103,30 @@ export default function GalleryScreen() {
     })();
   };
 
+  const addSelectionToAlbum = () => {
+    const ids = selection;
+    if (!ids || ids.size === 0) return;
+    void (async () => {
+      const ctx = requireCtx();
+      const albums = await listAlbumSummaries(ctx);
+      if (albums.length === 0) {
+        Alert.alert('Albüm yok', 'Önce Albümler sekmesinden bir albüm oluştur.');
+        return;
+      }
+      Alert.alert('Albüme ekle', `${ids.size} öğe eklenecek.`, [
+        { text: 'Vazgeç', style: 'cancel' },
+        ...albums.slice(0, 8).map((album) => ({
+          text: album.name,
+          onPress: () => {
+            void addItemsToAlbum(ctx, album.id, [...ids])
+              .then(() => setSelection(null))
+              .catch(() => Alert.alert('Hata', 'Eklenemedi.'));
+          },
+        })),
+      ]);
+    })().catch(() => Alert.alert('Hata', 'Albümler okunamadı.'));
+  };
+
   const confirmBulkDelete = () => {
     const ids = selection;
     if (!ids || ids.size === 0) return;
@@ -144,6 +169,18 @@ export default function GalleryScreen() {
         <Text style={styles.title}>{selecting ? `${selectedCount} seçili` : 'Galeri'}</Text>
         {selecting ? (
           <View style={styles.headerActions}>
+            <Pressable
+              onPress={addSelectionToAlbum}
+              disabled={selectedCount === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Albüme ekle"
+            >
+              <Ionicons
+                name="albums-outline"
+                size={22}
+                color={selectedCount === 0 ? colors.textDim : colors.text}
+              />
+            </Pressable>
             <Pressable
               onPress={confirmBulkDelete}
               disabled={selectedCount === 0}

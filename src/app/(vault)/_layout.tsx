@@ -34,6 +34,7 @@ export default function VaultLayout() {
         <Stack.Screen name="camera" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="media/[id]" options={{ presentation: 'fullScreenModal', animation: 'fade' }} />
         <Stack.Screen name="note/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="album/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="change-pin" options={{ presentation: 'modal' }} />
         <Stack.Screen name="decoy" options={{ presentation: 'modal' }} />
       </Stack>

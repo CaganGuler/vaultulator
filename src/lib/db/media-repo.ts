@@ -3,7 +3,7 @@ import { ownedRows, owns, tagFor, type TaggedRow, type VaultContext } from './sc
 import { evictThumb } from '../media/viewer-cache';
 import { deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
-export type MediaType = 'photo' | 'video';
+export type MediaType = 'photo' | 'video' | 'document';
 
 export interface MediaItem {
   id: string;
@@ -91,7 +91,10 @@ export async function deleteMediaItem(ctx: VaultContext, item: MediaItem): Promi
 export interface VaultStats {
   photoCount: number;
   videoCount: number;
+  documentCount: number;
   totalBytes: number;
+  /** Bytes per type, for the storage breakdown in settings. */
+  bytesByType: Record<MediaType, number>;
 }
 
 /**
@@ -101,10 +104,20 @@ export interface VaultStats {
 export async function getVaultStats(ctx: VaultContext): Promise<VaultStats> {
   const db = await getDb();
   const rows = await db.getAllAsync<MediaRow>('SELECT id, type, size_bytes, vault_tag FROM media_items');
-  const stats: VaultStats = { photoCount: 0, videoCount: 0, totalBytes: 0 };
+  const stats: VaultStats = {
+    photoCount: 0,
+    videoCount: 0,
+    documentCount: 0,
+    totalBytes: 0,
+    bytesByType: { photo: 0, video: 0, document: 0 },
+  };
   for (const row of ownedRows(ctx, rows)) {
+    // Was `else videoCount++`, which would have silently counted every
+    // document as a video.
     if (row.type === 'photo') stats.photoCount++;
-    else stats.videoCount++;
+    else if (row.type === 'video') stats.videoCount++;
+    else stats.documentCount++;
+    stats.bytesByType[row.type] += row.size_bytes;
     stats.totalBytes += row.size_bytes;
   }
   return stats;

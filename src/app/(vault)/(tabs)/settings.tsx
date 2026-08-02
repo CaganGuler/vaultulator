@@ -57,7 +57,13 @@ export default function SettingsScreen() {
                 void session
                   .wipeOwnContent()
                   .then(() => {
-                    setStats({ photoCount: 0, videoCount: 0, totalBytes: 0 });
+                    setStats({
+                      photoCount: 0,
+                      videoCount: 0,
+                      documentCount: 0,
+                      totalBytes: 0,
+                      bytesByType: { photo: 0, video: 0, document: 0 },
+                    });
                     setNoteCount(0);
                   })
                   .catch(() => Alert.alert('Hata', 'Silinemedi.'));
@@ -136,10 +142,23 @@ export default function SettingsScreen() {
           <View style={styles.row}>
             <Ionicons name="stats-chart-outline" size={20} color={colors.text} />
             <Text style={styles.rowText}>
-              {stats ? `${stats.photoCount} fotoğraf · ${stats.videoCount} video · ${noteCount} not` : '…'}
+              {stats
+                ? `${stats.photoCount} fotoğraf · ${stats.videoCount} video · ${stats.documentCount} belge · ${noteCount} not`
+                : '…'}
             </Text>
             <Text style={styles.rowValue}>{stats ? formatBytes(stats.totalBytes) : ''}</Text>
           </View>
+          {stats &&
+            (['photo', 'video', 'document'] as const)
+              .filter((type) => stats.bytesByType[type] > 0)
+              .map((type) => (
+                <View key={type} style={styles.row}>
+                  <Text style={styles.rowText}>
+                    {type === 'photo' ? 'Fotoğraflar' : type === 'video' ? 'Videolar' : 'Belgeler'}
+                  </Text>
+                  <Text style={styles.rowValue}>{formatBytes(stats.bytesByType[type])}</Text>
+                </View>
+              ))}
         </View>
 
         <View style={styles.section}>

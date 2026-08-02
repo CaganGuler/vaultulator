@@ -83,8 +83,30 @@ describe('media isolation', () => {
   });
 
   it('reports per-vault stats, never the combined total', async () => {
-    expect(await getVaultStats(primary)).toEqual({ photoCount: 1, videoCount: 1, totalBytes: 2500 });
-    expect(await getVaultStats(decoy)).toEqual({ photoCount: 1, videoCount: 0, totalBytes: 7 });
+    expect(await getVaultStats(primary)).toEqual({
+      photoCount: 1,
+      videoCount: 1,
+      documentCount: 0,
+      totalBytes: 2500,
+      bytesByType: { photo: 500, video: 2000, document: 0 },
+    });
+    expect(await getVaultStats(decoy)).toEqual({
+      photoCount: 1,
+      videoCount: 0,
+      documentCount: 0,
+      totalBytes: 7,
+      bytesByType: { photo: 7, video: 0, document: 0 },
+    });
+  });
+
+  it('counts documents as documents, not as videos', async () => {
+    // getVaultStats used to be `if photo ... else videoCount++`.
+    await insertMediaItem(primary, mediaItem('d', { type: 'document', mime: 'application/pdf', sizeBytes: 90 }));
+
+    const stats = await getVaultStats(primary);
+    expect(stats.documentCount).toBe(1);
+    expect(stats.videoCount).toBe(1);
+    expect(stats.bytesByType.document).toBe(90);
   });
 
   it('wipes only the calling vault’s rows', async () => {

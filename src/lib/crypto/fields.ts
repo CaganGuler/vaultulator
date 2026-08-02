@@ -24,3 +24,37 @@ export function decryptField(dbKey: Uint8Array, table: string, rowId: string, co
   const sealed = blob.subarray(GCM_IV_LEN);
   return utf8Decode(gcmOpen(dbKey, iv, sealed, fieldAad(table, rowId, column)));
 }
+
+// ── Length padding ──────────────────────────────────────────────────────────
+//
+// GCM does not hide length, so `length(blob)` leaks the size of what it wraps:
+// how many items an album holds, how long a caption is. Padding to a byte
+// bucket blurs that to the bucket width.
+//
+// This is a plaintext convention, not a format change — nothing about the
+// ciphertext layout moves, so invariant #4 does not apply and no version byte
+// changes. Note the existing note columns are deliberately NOT retrofitted:
+// re-padding them would mean re-encrypting every note, which needs the dbKey
+// and therefore a second keyed backfill. The asymmetry says nothing about how
+// many vaults exist. See docs/DATA-MODEL.md.
+
+/**
+ * NUL terminates the value and fills the remainder. It cannot occur in the
+ * text stored here — captions, album names, filenames — so it is unambiguous.
+ * A space would truncate the first caption that contained one.
+ */
+const NUL = '\u0000';
+
+export function padToBucket(value: string, bucketBytes: number): string {
+  if (value.includes(NUL)) throw new Error('Değer NUL içeremez');
+  const needed = utf8Encode(value).length + 1; // + terminator
+  const target = Math.max(bucketBytes, Math.ceil(needed / bucketBytes) * bucketBytes);
+  // Pad in characters, not bytes: NUL is one byte in UTF-8, so the encoded
+  // length lands exactly on the bucket.
+  return value + NUL.repeat(target - utf8Encode(value).length);
+}
+
+export function unpad(padded: string): string {
+  const end = padded.indexOf(NUL);
+  return end === -1 ? padded : padded.slice(0, end);
+}

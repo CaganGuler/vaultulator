@@ -35,6 +35,7 @@ import {
 import { zeroize } from '../lib/crypto/primitives';
 import { destroyDb } from '../lib/db';
 import { backfillRowTags } from '../lib/db/backfill';
+import { deleteAllAlbumsOf } from '../lib/db/albums-repo';
 import { deleteAllMediaOf, listAllReferencedFiles } from '../lib/db/media-repo';
 import { deleteAllNotesOf } from '../lib/db/notes-repo';
 import type { VaultContext } from '../lib/db/scope';
@@ -212,6 +213,10 @@ export const useSession = create<SessionState>((set, get) => ({
     const ctx = requireCtx();
     await deleteAllMediaOf(ctx);
     await deleteAllNotesOf(ctx);
+    // Without this a decoy's "reset the vault" would leave its albums
+    // standing — a self-inconsistent story for the one screen that exists to
+    // be convincing.
+    await deleteAllAlbumsOf(ctx);
     clearThumbCache();
     wipeDecryptedDir();
     // Only a primary session may sweep: it is the one that can be sure the

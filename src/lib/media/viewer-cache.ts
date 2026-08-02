@@ -1,8 +1,11 @@
 /**
  * Decrypted-content lifecycle.
  *
- * - Thumbnails and full-size photos are decrypted INTO MEMORY as base64 data
- *   URIs (plaintext never touches disk). Thumbnails live in a small LRU.
+ * - Thumbnails are decrypted INTO MEMORY as base64 data URIs and live in a
+ *   small LRU. They are 30-60 KB, so the base64 round-trip is fine here.
+ *   Full-size photos go through lib/media/photo-cache instead: at megabytes
+ *   each, the same approach peaked at several times the file size in JS heap,
+ *   which is what invariant #5 forbids.
  * - Videos must be decrypted to a temp file for expo-video playback; those
  *   temp files live in <cache>/decrypted/ and are wiped on lock, on
  *   background-lock and on every cold start (see stores/session.ts).
@@ -40,12 +43,6 @@ export async function getThumbnailDataUri(dek: Uint8Array, item: MediaItem): Pro
     thumbCache.delete(oldest);
   }
   return uri;
-}
-
-/** Full-size photo as an in-memory data URI. One at a time; not cached. */
-export async function getPhotoDataUri(dek: Uint8Array, item: MediaItem): Promise<string> {
-  const bytes = await decryptFileToBytes(dek, item.id, mediaFileUri(item.fileName));
-  return `data:${item.mime};base64,${base64Encode(bytes)}`;
 }
 
 function extensionForMime(mime: string): string {

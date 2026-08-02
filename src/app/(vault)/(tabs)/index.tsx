@@ -9,6 +9,7 @@ import { ProgressOverlay } from '@/components/progress-overlay';
 import { ThumbTile } from '@/components/thumb-tile';
 import { useMediaItems } from '@/hooks/use-media-items';
 import { deleteMediaItem, type MediaItem } from '@/lib/db/media-repo';
+import { applyGalleryOrder, type MediaFilter, serializeOrder } from '@/lib/media/gallery-order';
 import { importAssets, type ImportProgress, pickFromLibrary } from '@/lib/media/import';
 import { requireCtx, SessionChangedError, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
@@ -16,9 +17,7 @@ import { colors, radius, spacing } from '@/theme';
 const COLUMNS = 3;
 const GAP = 2;
 
-type Filter = 'all' | 'photo' | 'video';
-
-const FILTERS: { key: Filter; label: string }[] = [
+const FILTERS: { key: MediaFilter; label: string }[] = [
   { key: 'all', label: 'Tümü' },
   { key: 'photo', label: 'Fotoğraf' },
   { key: 'video', label: 'Video' },
@@ -29,16 +28,13 @@ export default function GalleryScreen() {
   const { width } = useWindowDimensions();
   const tileSize = (width - GAP * (COLUMNS - 1)) / COLUMNS;
 
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<MediaFilter>('all');
   const [oldestFirst, setOldestFirst] = useState(false);
   const [selection, setSelection] = useState<Set<string> | null>(null);
   const [importing, setImporting] = useState<ImportProgress | null>(null);
 
-  const visible = useMemo(() => {
-    const filtered = filter === 'all' ? items : items.filter((i) => i.type === filter);
-    // listMediaItems already returns newest-first.
-    return oldestFirst ? [...filtered].reverse() : filtered;
-  }, [items, filter, oldestFirst]);
+  // Shared with the viewer so both screens page through the same list.
+  const visible = useMemo(() => applyGalleryOrder(items, filter, oldestFirst), [items, filter, oldestFirst]);
 
   const selecting = selection !== null;
   const selectedCount = selection?.size ?? 0;
@@ -113,7 +109,11 @@ export default function GalleryScreen() {
       size={tileSize}
       selected={selection?.has(item.id) ?? false}
       selecting={selecting}
-      onPress={() => (selecting ? toggle(item.id) : router.push(`/media/${item.id}`))}
+      onPress={() =>
+        selecting
+          ? toggle(item.id)
+          : router.push(`/media/${item.id}?${serializeOrder(filter, oldestFirst)}`)
+      }
       onLongPress={() => (selecting ? toggle(item.id) : setSelection(new Set([item.id])))}
     />
   );

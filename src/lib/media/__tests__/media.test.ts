@@ -18,7 +18,6 @@ import {
   decryptVideoToTemp,
   deleteDecryptedTemp,
   evictThumb,
-  getPhotoDataUri,
   getThumbnailDataUri,
 } from '../viewer-cache';
 import { __reset as resetFs } from '../../../test/file-system-mock';
@@ -120,16 +119,6 @@ describe('viewer cache', () => {
     // Nothing cached and nothing on disk, so this must now fail rather than
     // quietly serve a stale decrypted copy of a deleted item.
     await expect(getThumbnailDataUri(dek, it)).rejects.toThrow();
-  });
-
-  it('serves full-size photos without caching them', async () => {
-    const it = item('a');
-    await seed(it);
-
-    expect(await getPhotoDataUri(dek, it)).toMatch(/^data:image\/jpeg;base64,/);
-
-    new File(mediaFileUri(it.fileName)).delete();
-    await expect(getPhotoDataUri(dek, it)).rejects.toThrow();
   });
 
   it('writes video plaintext only into the decrypted temp dir', async () => {

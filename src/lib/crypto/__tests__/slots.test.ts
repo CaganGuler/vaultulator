@@ -10,6 +10,7 @@ import * as SecureStore from 'expo-secure-store';
 import {
   changePin,
   createVault,
+  DEFAULT_KDF_PARAMS,
   deriveDbKey,
   deriveTagKey,
   disableDecoy,
@@ -20,6 +21,7 @@ import {
   getDecoyState,
   LockedOutError,
   PinInUseError,
+  getFailedAttemptLog,
   resetAttempts,
   resetDecoyPin,
   ROW_TAG_LEN,
@@ -320,6 +322,157 @@ describe('backoff covers every PIN path, not just unlock', () => {
     await changePin('888888', '777777', 'primary');
 
     expect((await getAttempts()).count).toBe(0);
+  });
+});
+
+describe('failed-attempt log', () => {
+  it('records every wrong PIN, whichever screen it came from', async () => {
+    const primaryDek = await createVault(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+
+    await unlockVault('000000').catch(() => undefined);
+    await resetAttempts();
+    await changePin('000000', '888888', 'decoy').catch(() => undefined);
+    await resetAttempts();
+    await verifyPinForRole('000000', 'primary').catch(() => undefined);
+
+    expect(await getFailedAttemptLog()).toHaveLength(3);
+  });
+
+  it('records nothing when the PIN is right', async () => {
+    await createVault(PRIMARY_PIN);
+    await unlockVault(PRIMARY_PIN);
+    expect(await getFailedAttemptLog()).toEqual([]);
+  });
+
+  // Timestamps outlive resetAttempts() on purpose: the counter answers "should
+  // I stall the next guess", the log answers "was someone at my phone".
+  it('survives the counter being cleared by a later success', async () => {
+    await createVault(PRIMARY_PIN);
+    await unlockVault('000000').catch(() => undefined);
+    await unlockVault(PRIMARY_PIN);
+
+    expect(await getFailedAttemptLog()).toHaveLength(1);
+    expect((await getAttempts()).count).toBe(0);
+  });
+
+  it('is created for a vault that predates the feature, on the first attempt', async () => {
+    await createVault(PRIMARY_PIN);
+    await SecureStore.deleteItemAsync('vault.log');
+
+    await unlockVault(PRIMARY_PIN);
+    expect(await SecureStore.getItemAsync('vault.log')).not.toBeNull();
+  });
+});
+
+/**
+ * Raising the Argon2id cost is worthless if it only applies to vaults created
+ * afterwards. The re-wrap has to reach the vault already on the phone, and it
+ * has to do so without a transaction across two SecureStore entries.
+ */
+describe('KDF parameter upgrade', () => {
+  const CURRENT = { ...DEFAULT_KDF_PARAMS };
+  const PREVIOUS = { v: 0, alg: 'argon2id' as const, memoryKiB: 32 * 1024, passes: 2, parallelism: 4 };
+
+  /** A vault as it would exist if the app had shipped with cheaper params. */
+  async function createVaultWithOldParams(pin: string): Promise<Uint8Array> {
+    Object.assign(DEFAULT_KDF_PARAMS, PREVIOUS);
+    try {
+      return await createVault(pin);
+    } finally {
+      Object.assign(DEFAULT_KDF_PARAMS, CURRENT);
+    }
+  }
+
+  async function storedParams(): Promise<Record<string, unknown>> {
+    return JSON.parse((await SecureStore.getItemAsync('vault.kdfParams'))!) as Record<string, unknown>;
+  }
+
+  async function storedSalt(): Promise<string> {
+    return base64Encode(base64Decode((await SecureStore.getItemAsync('vault.slots'))!).slice(1, 17));
+  }
+
+  afterEach(() => {
+    Object.assign(DEFAULT_KDF_PARAMS, CURRENT);
+  });
+
+  it('re-wraps a vault that only has a primary PIN, on the next unlock', async () => {
+    const created = await createVaultWithOldParams(PRIMARY_PIN);
+    const saltBefore = await storedSalt();
+
+    const opened = await unlockVault(PRIMARY_PIN);
+
+    // Same vault: re-wrapping the key must never re-encrypt the content.
+    expect(Array.from(opened.dek)).toEqual(Array.from(created));
+    expect(await storedParams()).toEqual({ ...CURRENT });
+    expect(await storedSalt()).not.toBe(saltBefore);
+
+    // And the PIN still works against the freshly sealed record.
+    const again = await unlockVault(PRIMARY_PIN);
+    expect(Array.from(again.dek)).toEqual(Array.from(created));
+  });
+
+  it('leaves the parameters frozen when a decoy exists', async () => {
+    const primaryDek = await createVaultWithOldParams(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+
+    await unlockVault(PRIMARY_PIN);
+
+    // Re-sealing every slot needs every PIN, and the decoy's is not ours to
+    // ask for. Documented limitation, not an oversight.
+    expect(await storedParams()).toEqual({ ...PREVIOUS });
+    expect((await unlockVault(DECOY_PIN)).role).toBe('decoy');
+  });
+
+  it('does not upgrade from a decoy session', async () => {
+    const primaryDek = await createVaultWithOldParams(PRIMARY_PIN);
+    await enableDecoy(primaryDek, DECOY_PIN);
+
+    await unlockVault(DECOY_PIN);
+
+    expect(await storedParams()).toEqual({ ...PREVIOUS });
+  });
+
+  // The window the fallback exists to survive: new params on disk, record
+  // still sealed under the old ones.
+  it('still opens after a crash between the two writes, then finishes the job', async () => {
+    const created = await createVaultWithOldParams(PRIMARY_PIN);
+
+    const write = SecureStore.setItemAsync;
+    const setItem = jest.spyOn(SecureStore, 'setItemAsync').mockImplementation(async (key, value, opts) => {
+      if (key === 'vault.slots') throw new Error('power lost');
+      return write(key, value, opts);
+    });
+    await unlockVault(PRIMARY_PIN);
+    setItem.mockRestore();
+
+    expect(await storedParams()).toEqual({ ...CURRENT, fallback: { ...PREVIOUS } });
+
+    // The old PIN must still reach the vault through the fallback...
+    const recovered = await unlockVault(PRIMARY_PIN);
+    expect(Array.from(recovered.dek)).toEqual(Array.from(created));
+    // ...and that unlock completes the upgrade it interrupted.
+    expect(await storedParams()).toEqual({ ...CURRENT });
+    expect(Array.from((await unlockVault(PRIMARY_PIN)).dek)).toEqual(Array.from(created));
+  });
+
+  it('drops a fallback left behind by a lost cleanup write', async () => {
+    await createVault(PRIMARY_PIN);
+    await SecureStore.setItemAsync('vault.kdfParams', JSON.stringify({ ...CURRENT, fallback: PREVIOUS }));
+
+    await unlockVault(PRIMARY_PIN);
+
+    expect(await storedParams()).toEqual({ ...CURRENT });
+  });
+
+  it('rejects a fallback that names an unknown algorithm', async () => {
+    await createVault(PRIMARY_PIN);
+    await SecureStore.setItemAsync(
+      'vault.kdfParams',
+      JSON.stringify({ ...CURRENT, fallback: { ...PREVIOUS, alg: 'pbkdf2' } }),
+    );
+
+    await expect(unlockVault(PRIMARY_PIN)).rejects.toThrow(VaultCorruptError);
   });
 });
 

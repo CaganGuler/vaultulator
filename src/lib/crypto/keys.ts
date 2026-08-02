@@ -51,6 +51,16 @@ import {
   zeroize,
 } from './primitives';
 import { base64Decode, base64Encode } from '../base64';
+import {
+  appendFailedAttempt,
+  clearAttemptLog,
+  deleteAttemptLog,
+  ensureAttemptLog,
+  initAttemptLog,
+  readAttemptLog,
+} from './attempt-log';
+
+export { LOG_CAPACITY } from './attempt-log';
 
 export class WrongPinError extends Error {
   constructor() {
@@ -148,6 +158,11 @@ interface StoredKdfParams extends Argon2idParams {
   alg: 'argon2id';
 }
 
+/**
+ * Current cost parameters. **Any change to the numbers must bump `v`** — the
+ * version is the sole signal that a stored record is due for re-wrapping, so a
+ * silent cost change would never reach an existing vault.
+ */
 export const DEFAULT_KDF_PARAMS: StoredKdfParams = {
   v: 1,
   alg: 'argon2id',
@@ -155,6 +170,29 @@ export const DEFAULT_KDF_PARAMS: StoredKdfParams = {
   passes: 3,
   parallelism: 4,
 };
+
+/**
+ * What `vault.kdfParams` actually holds.
+ *
+ * `fallback` exists only while an upgrade is in flight. Params and the record
+ * are two SecureStore entries with no transaction between them, so a crash in
+ * between would otherwise brick the vault: the new params cannot open a slot
+ * still sealed under the old ones. Writing the old params alongside the new
+ * ones *first* makes that window survivable — {@link attemptPin} retries with
+ * the fallback, and the next successful unlock finishes or discards the
+ * upgrade.
+ */
+interface StoredKdfDoc extends StoredKdfParams {
+  fallback?: StoredKdfParams;
+}
+
+function kdfIsCurrent(stored: StoredKdfParams): boolean {
+  return stored.v >= DEFAULT_KDF_PARAMS.v;
+}
+
+async function saveKdfDoc(doc: StoredKdfDoc): Promise<void> {
+  await SecureStore.setItemAsync(KEY_KDF_PARAMS, JSON.stringify(doc), SECURE_OPTS);
+}
 
 async function getRequired(key: string): Promise<string> {
   const value = await SecureStore.getItemAsync(key, SECURE_OPTS);
@@ -194,11 +232,12 @@ async function saveRecord(rec: VaultRecord): Promise<void> {
   await SecureStore.setItemAsync(KEY_RECORD, base64Encode(serializeRecord(rec)), SECURE_OPTS);
 }
 
-async function loadContext(): Promise<{ pepper: Uint8Array; params: StoredKdfParams }> {
+async function loadContext(): Promise<{ pepper: Uint8Array; params: StoredKdfParams; fallback?: StoredKdfParams }> {
   const pepper = base64Decode(await getRequired(KEY_PEPPER));
-  const params = JSON.parse(await getRequired(KEY_KDF_PARAMS)) as StoredKdfParams;
+  const { fallback, ...params } = JSON.parse(await getRequired(KEY_KDF_PARAMS)) as StoredKdfDoc;
   if (params.alg !== 'argon2id') throw new VaultCorruptError(`Bilinmeyen KDF: ${params.alg}`);
-  return { pepper, params };
+  if (fallback && fallback.alg !== 'argon2id') throw new VaultCorruptError(`Bilinmeyen KDF: ${fallback.alg}`);
+  return { pepper, params, fallback };
 }
 
 // ── Slot sealing / opening ──────────────────────────────────────────────────
@@ -351,6 +390,7 @@ export async function createVault(pin: string): Promise<Uint8Array> {
     await SecureStore.setItemAsync(KEY_PEPPER, base64Encode(pepper), SECURE_OPTS);
     await SecureStore.setItemAsync(KEY_KDF_PARAMS, JSON.stringify(params), SECURE_OPTS);
     await SecureStore.setItemAsync(KEY_ATTEMPTS, JSON.stringify({ count: 0, lockUntil: 0 }), SECURE_OPTS);
+    await initAttemptLog(pepper);
     await saveRecord({ pinSalt, slots, escrow: randomBytes(ESCROW_LEN) });
   } catch (e) {
     zeroize(dek);
@@ -408,6 +448,8 @@ export class LockedOutError extends Error {
 interface PinAttempt {
   rec: VaultRecord;
   pepper: Uint8Array;
+  /** The params the slot actually opened under — not necessarily the current
+   *  ones, mid-upgrade. Re-sealing under these keeps the record consistent. */
   params: StoredKdfParams;
   opened: UnlockedSlot;
 }
@@ -430,15 +472,20 @@ async function attemptPin(pin: string, now: number): Promise<PinAttempt> {
 
   const rec = await loadRecord();
   if (!rec) throw new VaultCorruptError('Kasa kaydı yok');
-  const { pepper, params } = await loadContext();
+  const { pepper, params, fallback } = await loadContext();
+  await ensureAttemptLog(pepper);
 
   let opened: UnlockedSlot | null;
+  let openedWith = params;
   try {
-    const kek = await deriveKek(pin, rec.pinSalt, pepper, params);
-    try {
-      opened = trialSlots(kek, rec);
-    } finally {
-      zeroize(kek);
+    opened = await tryParams(pin, rec, pepper, params);
+    // Only reachable while an interrupted upgrade is still on disk, so the
+    // extra argon2id run costs nothing in steady state. It does make a wrong
+    // PIN slower than a right one during that window, which reveals that an
+    // upgrade is pending — a fact of no use to anyone.
+    if (!opened && fallback) {
+      opened = await tryParams(pin, rec, pepper, fallback);
+      if (opened) openedWith = fallback;
     }
   } catch (e) {
     zeroize(pepper);
@@ -452,7 +499,21 @@ async function attemptPin(pin: string, now: number): Promise<PinAttempt> {
     await recordFailedAttempt(Date.now());
     throw new WrongPinError();
   }
-  return { rec, pepper, params, opened };
+  return { rec, pepper, params: openedWith, opened };
+}
+
+async function tryParams(
+  pin: string,
+  rec: VaultRecord,
+  pepper: Uint8Array,
+  params: StoredKdfParams,
+): Promise<UnlockedSlot | null> {
+  const kek = await deriveKek(pin, rec.pinSalt, pepper, params);
+  try {
+    return trialSlots(kek, rec);
+  } finally {
+    zeroize(kek);
+  }
 }
 
 /** Unwraps a DEK with the given PIN. Throws WrongPinError when no slot opens. */
@@ -482,8 +543,8 @@ export async function unlockVault(pin: string): Promise<UnlockedSlot> {
     await SecureStore.deleteItemAsync(LEGACY_KEY_PIN_SALT, SECURE_OPTS);
   }
 
-  const { pepper, opened } = await attemptPin(pin, Date.now());
-  zeroize(pepper);
+  const attempt = await attemptPin(pin, Date.now());
+  const { opened } = attempt;
   await resetAttempts();
 
   // The duress wipe lives here, not in a caller, so no code path can reach a
@@ -500,7 +561,69 @@ export async function unlockVault(pin: string): Promise<UnlockedSlot> {
       // best effort — the decoy session must open regardless
     }
   }
+
+  try {
+    await settleKdfUpgrade(pin, attempt);
+  } finally {
+    zeroize(attempt.pepper);
+  }
   return opened;
+}
+
+/**
+ * Opportunistic KDF re-wrap, run after a successful unlock.
+ *
+ * Raising the Argon2id cost means re-sealing every slot, which means knowing
+ * every PIN — so this only fires when the primary is the *only* occupied slot.
+ * With a decoy or duress PIN installed the parameters are frozen at whatever
+ * they were when those slots were created; that is a real limitation, written
+ * up in docs/SECURITY.md rather than papered over by prompting for three PINs.
+ *
+ * Fails open throughout. An unlock that already succeeded must not turn into
+ * an error because a housekeeping write did not land.
+ */
+async function settleKdfUpgrade(pin: string, attempt: PinAttempt): Promise<void> {
+  const { rec, pepper, opened } = attempt;
+  try {
+    const { fallback } = await loadContext();
+    const current = kdfIsCurrent(attempt.params);
+
+    if (current && !fallback) return;
+    if (current) {
+      // A previous upgrade re-sealed the record but its cleanup write did not
+      // land. Dropping the fallback now restores the single-derivation path.
+      await saveKdfDoc(DEFAULT_KDF_PARAMS);
+      return;
+    }
+    if (opened.role !== 'primary') return;
+
+    // Slots we cannot re-seal, because we do not know their PINs. The escrow
+    // is the only honest way to ask: unoccupied slots are random filler and
+    // indistinguishable from real ones.
+    const escrow = openEscrow(opened.dek, rec.escrow);
+    if (escrow) {
+      zeroize(escrow.dekDecoy);
+      return;
+    }
+
+    // Old params stay readable until the record is confirmed re-sealed.
+    await saveKdfDoc({ ...DEFAULT_KDF_PARAMS, fallback: attempt.params });
+
+    const pinSalt = randomBytes(PIN_SALT_LEN);
+    const kek = await deriveKek(pin, pinSalt, pepper, DEFAULT_KDF_PARAMS);
+    try {
+      const slots = rec.slots.map((_, i) =>
+        i === SLOT_PRIMARY ? sealSlot(kek, 'primary', opened.dek) : randomBytes(SLOT_LEN),
+      );
+      await saveRecord({ pinSalt, slots, escrow: randomBytes(ESCROW_LEN) });
+    } finally {
+      zeroize(kek);
+    }
+
+    await saveKdfDoc(DEFAULT_KDF_PARAMS);
+  } catch {
+    // The vault is open; the next unlock will try again.
+  }
 }
 
 /**
@@ -577,6 +700,7 @@ export async function destroyVaultKeys(): Promise<void> {
   for (const key of ALL_KEYS) {
     await SecureStore.deleteItemAsync(key, SECURE_OPTS);
   }
+  await deleteAttemptLog();
 }
 
 // ── Decoy management (primary session only) ─────────────────────────────────
@@ -773,13 +897,53 @@ export async function getAttempts(): Promise<AttemptState> {
   }
 }
 
+/**
+ * The single funnel for every failed PIN check, and therefore the only place
+ * the log is written. The pepper is loaded here rather than threaded in from
+ * the callers because failures happen while the vault is locked, so there is
+ * no session and no DEK to reach for.
+ */
 export async function recordFailedAttempt(now: number): Promise<AttemptState> {
   const prev = await getAttempts();
   const count = prev.count + 1;
   const delay = backoffForCount(count);
   const next: AttemptState = { count, lockUntil: delay > 0 ? now + delay : 0 };
   await SecureStore.setItemAsync(KEY_ATTEMPTS, JSON.stringify(next), SECURE_OPTS);
+
+  let pepper: Uint8Array | null = null;
+  try {
+    pepper = base64Decode(await getRequired(KEY_PEPPER));
+    await appendFailedAttempt(pepper, now);
+  } catch {
+    // The counter above is the security control; the log is forensics.
+  } finally {
+    zeroize(pepper);
+  }
   return next;
+}
+
+/**
+ * Failure timestamps, oldest first. Gated to the primary session by the
+ * caller: the key is derived from the pepper, not from a DEK, so nothing
+ * cryptographic keeps a decoy session out — see docs/SECURITY.md.
+ */
+export async function getFailedAttemptLog(): Promise<number[]> {
+  const pepper = base64Decode(await getRequired(KEY_PEPPER));
+  try {
+    return await readAttemptLog(pepper);
+  } finally {
+    zeroize(pepper);
+  }
+}
+
+/** Empties the history, keeping the record present and its length unchanged. */
+export async function clearFailedAttemptLog(): Promise<void> {
+  const pepper = base64Decode(await getRequired(KEY_PEPPER));
+  try {
+    await clearAttemptLog(pepper);
+  } finally {
+    zeroize(pepper);
+  }
 }
 
 export async function resetAttempts(): Promise<void> {

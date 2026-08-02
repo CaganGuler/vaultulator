@@ -37,6 +37,7 @@ export default function VaultLayout() {
         <Stack.Screen name="album/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="change-pin" options={{ presentation: 'modal' }} />
         <Stack.Screen name="decoy" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="attempts" options={{ presentation: 'modal' }} />
       </Stack>
     </View>
   );

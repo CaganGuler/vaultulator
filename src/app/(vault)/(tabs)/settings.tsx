@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { getFailedAttemptLog } from '@/lib/crypto/keys';
 import { getVaultStats, type VaultStats } from '@/lib/db/media-repo';
 import { countNotes } from '@/lib/db/notes-repo';
 import { requireCtx, useIsPrimary, useSession } from '@/stores/session';
@@ -18,6 +19,7 @@ export default function SettingsScreen() {
   const isPrimary = useIsPrimary();
   const [stats, setStats] = useState<VaultStats | null>(null);
   const [noteCount, setNoteCount] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -28,7 +30,12 @@ export default function SettingsScreen() {
       void countNotes(ctx)
         .then(setNoteCount)
         .catch(() => setNoteCount(0));
-    }, []),
+      if (isPrimary) {
+        void getFailedAttemptLog()
+          .then((log) => setFailedCount(log.length))
+          .catch(() => setFailedCount(0));
+      }
+    }, [isPrimary]),
   );
 
   // Identical copy and identical flow in both sessions. Only the outcome
@@ -91,11 +98,19 @@ export default function SettingsScreen() {
             <Text style={styles.rowText}>Şimdi kilitle</Text>
           </Pressable>
           {isPrimary && (
-            <Pressable style={styles.row} onPress={() => router.push('/decoy')}>
-              <Ionicons name="albums-outline" size={20} color={colors.text} />
-              <Text style={styles.rowText}>Yem kasa</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
-            </Pressable>
+            <>
+              <Pressable style={styles.row} onPress={() => router.push('/decoy')}>
+                <Ionicons name="albums-outline" size={20} color={colors.text} />
+                <Text style={styles.rowText}>Yem kasa</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+              </Pressable>
+              <Pressable style={styles.row} onPress={() => router.push('/attempts')}>
+                <Ionicons name="time-outline" size={20} color={colors.text} />
+                <Text style={styles.rowText}>Başarısız denemeler</Text>
+                {failedCount > 0 && <Text style={styles.rowValue}>{failedCount}</Text>}
+                <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+              </Pressable>
+            </>
           )}
         </View>
 

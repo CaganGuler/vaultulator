@@ -15,7 +15,8 @@ import { base64Encode } from '../base64';
 import { decryptFile, decryptFileToBytes, type StreamProgress } from '../crypto/stream';
 import { decryptedFileUri, deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
-const THUMB_CACHE_MAX = 80;
+// ~40 KB each, so 300 is well under 15 MB and covers a long scroll back up.
+const THUMB_CACHE_MAX = 300;
 const thumbCache = new Map<string, string>(); // itemId → data URI (Map keeps insertion order → LRU)
 
 export function clearThumbCache(): void {

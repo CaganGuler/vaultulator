@@ -53,6 +53,8 @@ export default function NotesScreen() {
           icon="document-lock-outline"
           title="Henüz not yok"
           subtitle="Notların başlıklarıyla birlikte şifrelenir; veritabanı dosyasını açan biri bile okuyamaz."
+          actionLabel="Yeni not"
+          onAction={() => router.push('/note/new')}
         />
       ) : !loading && visible.length === 0 ? (
         <EmptyState icon="search-outline" title="Eşleşen not yok" subtitle="Farklı bir arama dene." />

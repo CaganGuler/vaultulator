@@ -135,6 +135,8 @@ export async function ingestPickedDocument(input: IngestDocumentInput): Promise<
 interface IngestVideoInput {
   ctx: VaultContext;
   sourceUri: string;
+  /** Known at capture and for library picks; the player backfills the rest. */
+  durationMs?: number | null;
   onProgress?: (progress: StreamProgress) => void;
 }
 
@@ -158,7 +160,7 @@ export async function ingestCapturedVideo(input: IngestVideoInput): Promise<Medi
       sizeBytes,
       width: thumb.width || null,
       height: thumb.height || null,
-      durationMs: null,
+      durationMs: input.durationMs != null ? Math.round(input.durationMs) : null,
       createdAt: Date.now(),
     };
     await encryptFile({

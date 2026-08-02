@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { MediaItem } from '../lib/db/media-repo';
 import { useThumbnail } from '../hooks/use-thumbnail';
-import { colors, formatDate } from '../theme';
+import { colors, formatDate, formatDuration } from '../theme';
 
 interface ThumbTileProps {
   item: MediaItem;
@@ -18,6 +18,7 @@ interface ThumbTileProps {
 export function ThumbTile({ item, size, onPress, onLongPress, selecting, selected }: ThumbTileProps) {
   const uri = useThumbnail(item);
   const kind = item.type === 'video' ? 'Video' : item.type === 'document' ? 'Belge' : 'Fotoğraf';
+  const length = item.type === 'video' && item.durationMs != null ? `, ${formatDuration(item.durationMs)}` : '';
   return (
     <Pressable
       onPress={onPress}
@@ -25,7 +26,7 @@ export function ThumbTile({ item, size, onPress, onLongPress, selecting, selecte
       style={[styles.tile, { width: size, height: size }, selected && styles.tileSelected]}
       accessibilityRole={selecting ? 'checkbox' : 'imagebutton'}
       accessibilityState={selecting ? { checked: selected } : undefined}
-      accessibilityLabel={`${kind}, ${formatDate(item.createdAt)}`}
+      accessibilityLabel={`${kind}${length}, ${formatDate(item.createdAt)}`}
     >
       {/* Decrypted plaintext below: memory-only, never persisted (invariant #2). */}
       {item.type === 'document' ? (
@@ -48,7 +49,8 @@ export function ThumbTile({ item, size, onPress, onLongPress, selecting, selecte
       )}
       {item.type === 'video' && !selecting && (
         <View style={styles.badge}>
-          <Ionicons name="play" size={14} color={colors.text} />
+          <Ionicons name="play" size={12} color={colors.text} />
+          {item.durationMs != null && <Text style={styles.badgeText}>{formatDuration(item.durationMs)}</Text>}
         </View>
       )}
       {selecting && (
@@ -83,8 +85,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 6,
     bottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderRadius: 999,
-    padding: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
   },
+  badgeText: { color: colors.text, fontSize: 11, fontVariant: ['tabular-nums'] },
 });

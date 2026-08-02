@@ -92,6 +92,8 @@ export default function AlbumsScreen() {
           icon="albums-outline"
           title="Albüm yok"
           subtitle="Galeride öğelere uzun basıp seçtiklerini bir albüme ekleyebilirsin."
+          actionLabel="Albüm oluştur"
+          onAction={() => setCreating(true)}
         />
       ) : (
         <FlatList

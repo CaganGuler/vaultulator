@@ -95,8 +95,11 @@ export default function CameraScreen() {
     setRecording(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     let video: { uri: string } | undefined;
+    const startedAt = Date.now();
+    let durationMs: number | null = null;
     try {
       video = await camera.recordAsync();
+      durationMs = Date.now() - startedAt;
     } finally {
       setRecording(false);
     }
@@ -107,6 +110,7 @@ export default function CameraScreen() {
       ingestCapturedVideo({
         ctx,
         sourceUri: uri,
+        durationMs,
         onProgress: (p) => setProgress(p.totalBytes > 0 ? p.processedBytes / p.totalBytes : null),
       }),
     );

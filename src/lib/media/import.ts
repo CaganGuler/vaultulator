@@ -127,6 +127,7 @@ export async function importAssets(
           ? await ingestCapturedVideo({
               ctx,
               sourceUri: asset.uri,
+              durationMs: asset.duration,
               onProgress: (stream) => onProgress?.({ current, total: assets.length, stream }),
             })
           : await ingestCapturedPhoto({

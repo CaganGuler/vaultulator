@@ -113,6 +113,23 @@ export async function setCaption(ctx: VaultContext, id: string, caption: string)
   );
 }
 
+/**
+ * Video length, in milliseconds.
+ *
+ * Written at ingest when the source knows it, and backfilled by the player the
+ * first time an older video is watched — decrypting gigabytes of existing
+ * video just to read a metadata field would be a poor trade.
+ */
+export async function setDurationMs(ctx: VaultContext, id: string, durationMs: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE media_items SET duration_ms = ? WHERE id = ? AND vault_tag = ?',
+    Math.round(durationMs),
+    id,
+    tagFor(ctx, id),
+  );
+}
+
 let cachedIndex: Map<string, string> | null = null;
 
 /** Drops the in-memory plaintext captions. Called from lock(). */

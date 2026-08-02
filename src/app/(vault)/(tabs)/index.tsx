@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -45,6 +45,10 @@ export default function GalleryScreen() {
   const [searching, setSearching] = useState(false);
   const [captionIndex, setCaptionIndex] = useState<Map<string, string> | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ label: string; current: number; total: number } | null>(null);
+  // The "we did not delete your originals" warning is worth reading once per
+  // unlocked session; on every batch it becomes a dismiss reflex. The screen
+  // unmounts at lock, so this resets exactly when the reminder is due again.
+  const warnedAboutOriginals = useRef(false);
 
   // Shared with the viewer so both screens page through the same list.
   const ordered = useMemo(() => applyGalleryOrder(items, filter, oldestFirst), [items, filter, oldestFirst]);
@@ -99,15 +103,13 @@ export default function GalleryScreen() {
         await refresh();
         if (failed > 0) {
           Alert.alert('Kısmen alındı', `${total - failed} öğe alındı, ${failed} tanesi alınamadı.`);
-        } else if (source === 'media') {
+        } else if (!warnedAboutOriginals.current) {
+          warnedAboutOriginals.current = true;
           Alert.alert(
             'Alındı',
-            'Seçtiklerin kasaya kopyalandı. Orijinalleri galeriden silmedik — uygulamanın galeriye erişimi yok. Gizli kalmalarını istiyorsan onları galeriden kendin sil.',
-          );
-        } else {
-          Alert.alert(
-            'Alındı',
-            'Belgeler kasaya kopyalandı. Orijinaller bulundukları yerde duruyor; gizli kalmalarını istiyorsan onları kendin sil.',
+            source === 'media'
+              ? 'Seçtiklerin kasaya kopyalandı. Orijinalleri galeriden silmedik — uygulamanın galeriye erişimi yok. Gizli kalmalarını istiyorsan onları galeriden kendin sil.'
+              : 'Belgeler kasaya kopyalandı. Orijinaller bulundukları yerde duruyor; gizli kalmalarını istiyorsan onları kendin sil.',
           );
         }
       } catch (e) {
@@ -340,6 +342,8 @@ export default function GalleryScreen() {
           icon="images-outline"
           title="Burası boş"
           subtitle="Kamerayla çek ya da galeriden içeri al. Çekilenler cihaz galerisine hiç düşmeden şifrelenir."
+          actionLabel="Kamerayı aç"
+          onAction={() => router.push('/camera')}
         />
       ) : !loading && visible.length === 0 ? (
         <EmptyState

@@ -22,7 +22,10 @@ export function useThumbnail(item: MediaItem): string | null {
     return () => {
       cancelled = true;
     };
-  }, [item]);
+    // Keyed on the id, not on `item`: listMediaItems hands back fresh objects
+    // on every focus, so an object-identity dep re-decrypted every visible
+    // tile each time the gallery came back.
+  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps -- see above
 
   return uri;
 }

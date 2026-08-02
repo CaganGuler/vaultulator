@@ -14,7 +14,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
-import type { MediaItem } from '../../lib/db/media-repo';
+import { setDurationMs, type MediaItem } from '../../lib/db/media-repo';
 import { decryptVideoToTemp, deleteDecryptedTemp } from '../../lib/media/viewer-cache';
 import { requireCtx, useSession } from '../../stores/session';
 import { colors, radius } from '../../theme';
@@ -68,7 +68,7 @@ export function VideoPage({ item, placeholderUri, active }: VideoPageProps) {
     );
   }
 
-  if (shown) return <PlayingVideo uri={shown} width={width} />;
+  if (shown) return <PlayingVideo uri={shown} width={width} item={item} />;
 
   return (
     <View style={[styles.page, { width }]}>
@@ -104,13 +104,20 @@ export function VideoPage({ item, placeholderUri, active }: VideoPageProps) {
  * locking. A leaked releaser means it never idle-locks again, so the unmount
  * cleanup releases unconditionally.
  */
-function PlayingVideo({ uri, width }: { uri: string; width: number }) {
+function PlayingVideo({ uri, width, item }: { uri: string; width: number; item: MediaItem }) {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
     p.play();
   });
 
   useKeepAwake();
+
+  // Rows ingested before durations were recorded get theirs the first time
+  // they are watched. Fire and forget: a missing length is cosmetic.
+  useEventListener(player, 'sourceLoad', ({ duration }) => {
+    if (item.durationMs != null || !duration) return;
+    void setDurationMs(requireCtx(), item.id, duration * 1000).catch(() => undefined);
+  });
 
   const release = useRef<(() => void) | null>(null);
   useEventListener(player, 'playingChange', ({ isPlaying }) => {

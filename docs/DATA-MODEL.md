@@ -6,14 +6,17 @@
 <Paths.document>/vault/media/        şifreli orijinaller        <uuid>.enc
 <Paths.document>/vault/thumbs/       şifreli küçük resimler     <uuid>.thumb.enc
 <Paths.document>/SQLite/vault.db     expo-sqlite veritabanı
-<Paths.cache>/decrypted/             GEÇİCİ düz içerik (video oynatma, paylaşım)
+<Paths.cache>/decrypted/             GEÇİCİ düz içerik — tek izinli konum (invariant #2)
+                                     p-<id>.<ext>      fotoğraf (viewer, LRU: 7 girdi / 96 MiB)
+                                     <id>.<ext>        video / belge (basınca çözülür)
+                                     export-<id>.<ext> onaylı paylaşım
                                      → kilitte + arka plan kilidinde + her açılışta silinir
 ```
 
 Kamera çekim temp'leri expo-camera'nın kendi cache konumuna düşer ve ingest sonunda
 `finally` bloğunda silinir.
 
-## SQLite şeması (v2)
+## SQLite şeması (v3)
 
 Şema `PRAGMA user_version` ile sürümlenir; migration listesi `src/lib/db/schema.ts`'dedir.
 
@@ -24,19 +27,31 @@ CREATE TABLE meta (            -- düz key-value: schema dışı ayarlar
 );
 
 CREATE TABLE media_items (
-  id          TEXT PRIMARY KEY,          -- uuidv4 (expo-crypto randomUUID)
-  type        TEXT NOT NULL CHECK (type IN ('photo','video')),
-  file_name   TEXT NOT NULL,             -- vault/media/ altındaki ad: '<id>.enc'
-  thumb_name  TEXT,                      -- vault/thumbs/ altındaki ad: '<id>.thumb.enc'
-  mime        TEXT NOT NULL,             -- image/jpeg | video/mp4 | video/quicktime
-  size_bytes  INTEGER NOT NULL,          -- DÜZ (şifresiz) içerik boyutu
-  width       INTEGER,
-  height      INTEGER,
-  duration_ms INTEGER,                   -- yalnızca video
-  created_at  INTEGER NOT NULL,          -- epoch ms
-  vault_tag   BLOB                       -- v2: HMAC(tagKey, id)[0..16] — sahiplik
+  id            TEXT PRIMARY KEY,        -- uuidv4 (expo-crypto randomUUID)
+  type          TEXT NOT NULL CHECK (type IN ('photo','video','document')),
+  file_name     TEXT NOT NULL,           -- vault/media/ altındaki ad: '<id>.enc'
+  thumb_name    TEXT,                    -- vault/thumbs/ altındaki ad; belgelerde NULL
+  mime          TEXT NOT NULL,           -- image/jpeg | video/mp4 | application/pdf | …
+  size_bytes    INTEGER NOT NULL,        -- DÜZ (şifresiz) içerik boyutu
+  width         INTEGER,
+  height        INTEGER,
+  duration_ms   INTEGER,                 -- yalnızca video; eski satırlar ilk oynatmada dolar
+  created_at    INTEGER NOT NULL,        -- epoch ms
+  vault_tag     BLOB,                    -- v2: HMAC(tagKey, id)[0..16] — sahiplik
+  caption_enc   BLOB,                    -- v3: 64 B kovaya dolgulu, AAD '<id>:caption'
+  orig_name_enc BLOB                     -- v3: 64 B kovaya dolgulu, AAD '<id>:orig_name'
 );
 CREATE INDEX idx_media_created ON media_items(created_at DESC);
+
+CREATE TABLE albums (                    -- v3
+  id         TEXT PRIMARY KEY,
+  name_enc   BLOB NOT NULL,              -- AAD 'albums:<id>:name',  64 B kovaya dolgulu
+  items_enc  BLOB NOT NULL,              -- AAD 'albums:<id>:items', 1024 B kovaya dolgulu
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  vault_tag  BLOB NOT NULL               -- tablo boş yaratıldı → ihlal edecek satır yok
+);
+CREATE INDEX idx_albums_updated ON albums(updated_at DESC);
 
 CREATE TABLE notes (
   id         TEXT PRIMARY KEY,           -- uuidv4
@@ -93,6 +108,46 @@ Tasarım kararları:
 - **`PRAGMA secure_delete = ON`** — silinen satırlar freelist/WAL sayfalarında kalmasın
   (silinmiş bir yem kasa dosyadan kurtarılabilmemeli).
 
+### v3: belge, açıklama, albüm
+
+**`media_items` yeniden inşa edildi.** SQLite bir `CHECK` kısıtını `ALTER TABLE` ile
+değiştiremez, `'document'` ise CHECK'in içinde. Migration `media_items_v3`'ü yaratır,
+satırları **`vault_tag` dahil, NULL'lar dahil** kopyalar, eskiyi düşürür, yeniyi
+adlandırır, dizini yeniden kurar. Yeni `type` değerleri eskinin üst kümesi olduğu için
+kopyalama CHECK'e çarpmaz.
+
+**En kritik nokta: NULL `vault_tag` yeniden inşadan sağ çıkmalı.** v1'de kalmış ve hiç kilidi
+açılmamış bir cihaz v3'e her etiketi NULL olarak ulaşır; `backfillRowTags` onları ilk primary
+açılışta sahiplenir. Kolonu NOT NULL yapmak tam da en eski veriyi taşıyan cihazlarda
+migration'ı patlatırdı. `albums.vault_tag` ise NOT NULL — tablo boş yaratılıyor, ihlal edecek
+satır yok. Bu asimetri kasıtlıdır ve `migration-v3.test.ts` onu sabitler.
+
+**Albüm üyeliği birleşim tablosu DEĞİL.** `album_items(album_id, item_id, …)` `vault_tag`'in
+var olma sebebini ortadan kaldırırdı: düz bir `album_id` eklendiği anda `GROUP BY album_id`
+medya tablosunu denklik sınıflarına ayırıyor ve çoktan-çoğa ilişkide bağlı bileşenler
+dosyalanmış her öğenin kasa dağılımını geri veriyor. Kabul ettiğimiz metadata sızıntısından
+(SECURITY.md #5) nitelik olarak daha kötü. Üyelik bu yüzden albüm satırının **içinde**,
+şifreli ve dolgulu bir id listesi olarak durur. Yan fayda: sıra bedava (dizinin kendisi
+sıra), öğe sayısı bedava, 200 öğeyi toplu eklemek tek satır yazımı — ve `ownedRows()` tek
+kapsamlama ilkesi olarak kalıyor.
+
+**Dolgu sözleşmesi.** Metin, kovaya kadar NUL (`\u0000`) ile doldurulur; NUL aynı zamanda
+sonlandırıcıdır. Kova: `items_enc` 1024 B, diğerleri 64 B. Bu bir *düz metin* sözleşmesidir,
+kripto formatı değişikliği değil — invariant #4 tetiklenmiyor. Boşluk yerine NUL kullanılıyor,
+yoksa boşluk içeren ilk açıklama kırpılırdı.
+
+**Notlar bilerek dolgusuz.** Geriye dönük yeniden şifreleme `dbKey` ister, yani ikinci bir
+anahtarlı backfill — `vault_tag` backfill'inin yanına ikinci bir "ilk açılışta koşan
+migration" koymak, kazandırdığından fazlasını riske atardı. Not gövdesi uzunluğu bu yüzden
+hâlâ bir uzunluk sınıfı sızdırıyor.
+
+**Açıklamalar galeri sorgusunda çözülmez.** `listMediaItems` 2000 satırda sıfır kripto
+yapıyor ve öyle kalması gerekiyor. Arama alanı açılınca `loadCaptionIndex(ctx)` bir kez
+koşar (2000 GCM ≈ 10-40 ms), gerisi saf JS; `lock()` indeksi temizler. FTS5 reddedildi: düz
+metin indeksi açıklamaları doğrudan `vault.db`'ye yazar, deterministik kelime hash'i ise
+"bu iki satır kelime paylaşıyor mu" sorusunu cevaplanabilir kılar — tam da kaçındığımız
+bölme fonksiyonu.
+
 ## `.enc` dosya formatı (bayt düzeni, v1)
 
 ```
@@ -120,9 +175,10 @@ Hepsi `WHEN_UNLOCKED_THIS_DEVICE_ONLY` ile; 2048B/anahtar limitinin çok altınd
 | Anahtar | İçerik | Boyut |
 |---|---|---|
 | `vault.pepper` | 32B rastgele, base64 — Argon2id `secret` girdisi | ~44 B |
-| `vault.kdfParams` | JSON `{v, alg:'argon2id', memoryKiB, passes, parallelism}` | ~80 B |
+| `vault.kdfParams` | JSON `{v, alg:'argon2id', memoryKiB, passes, parallelism}` + yükseltme sırasında geçici `fallback` | ~80 B (fallback varken ~160 B) |
 | `vault.slots` | Kasa kaydı (aşağıda), base64 — **her zaman 326 B ham** | ~436 B |
 | `vault.attempts` | JSON `{count, lockUntil}` — backoff durumu | ~40 B |
+| `vault.log` | `iv(12) ‖ AES-256-GCM(logKey, 16 × float64 zaman damgası)` — **her zaman 156 B ham**; boş girdiler 0, dolgu gerekmez (uzunluk hiçbir şey açığa vurmuyor) | ~208 B |
 
 Legacy (yalnızca migration sırasında okunur, sonra silinir): `vault.pinSalt`,
 `vault.wrappedDek`.

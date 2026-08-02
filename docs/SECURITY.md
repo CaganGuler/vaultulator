@@ -21,6 +21,9 @@ Alt anahtarlar (domain separation):
   fileKey = HKDF-SHA256(DEK, salt = dosya başına fileSalt, info = "vault/file/v1")
   K_db    = HKDF-SHA256(DEK, info = "vault/db/v1")
   tagKey  = HKDF-SHA256(DEK, info = "vault/tag/v1")
+
+DEK'ten TÜREMEYEN tek anahtar — pepper'dan gelir, çünkü kasa KİLİTLİYKEN gerekir:
+  logKey  = HKDF-SHA256(pepper, info = "vault/log/v1")   (başarısız deneme günlüğü)
 ```
 
 **Pepper asıl savunma hattıdır.** 6 haneli bir PIN'in (10⁶ olasılık) hiçbir KDF ile offline
@@ -53,6 +56,43 @@ Bu **küçük ama gerçek bir gerileme**: eskiden her PIN değişimi salt'ı dö
 pepper + salt bir kez çalınmışsa (root'lu cihaz — zaten kapsam dışı) önceden hesaplanmış
 bir KEK sözlüğü geçersizleşiyordu. Sabit salt'ta o sözlük kalıcı olarak geçerli kalır.
 Asıl duvar hâlâ pepper: onsuz sözlük hiç kurulamaz.
+
+Tek istisna: **KDF yeniden sarma** (aşağıda) salt'ı da döndürür — ama yalnızca tek slot
+doluyken çalıştığı için kilitleyecek başka slot yoktur.
+
+## KDF parametrelerini yükseltme
+
+Argon2id maliyetini artırmak, yalnızca yeni kurulan kasalara uygularsa işe yaramaz;
+telefonda **duran** kasaya ulaşması gerekir. `DEFAULT_KDF_PARAMS.v` arttığında ilk başarılı
+kilit açılışında kayıt yeni parametrelerle (ve yeni bir salt'la) yeniden sarılır. Medya
+yeniden şifrelenmez — değişen tek şey DEK'in sarımı.
+
+**Yem ya da panik PIN'i kuruluysa parametreler donar.** Her slotu yeniden sarmak her PIN'i
+bilmeyi gerektirir ve yem PIN'i bizim isteyeceğimiz bir şey değil. Gerçek bir sınır; üç PIN
+soran bir akışla gizlenmiyor.
+
+**İki kayıt, tek işlem yok.** Parametreler `vault.kdfParams`'ta, sarım `vault.slots`'ta ve
+SecureStore'da transaction yok — aradaki bir çökme kasayı tuğlalaştırırdı, çünkü yeni
+parametreler eski sarımı açamaz. Bu yüzden yeni parametreler yazılırken eskisi `fallback`
+alanında **yanına** yazılır: `attemptPin` açamazsa fallback'le bir kez daha dener, sonraki
+başarılı açılış da yarım kalan işi tamamlar veya fallback'i düşürür. Fallback varken yanlış
+PIN iki Argon2id koşusu kadar sürer — yani "bekleyen bir yükseltme var" bilgisi zamanlamadan
+okunabilir; kimsenin işine yaramayacak bir bilgi.
+
+## Başarısız deneme günlüğü
+
+Backoff sayacı her başarılı açılışta sıfırlanır, dolayısıyla asıl soruyu yanıtlayamaz:
+*telefon elimde değilken biri denedi mi?* `vault.log` son 16 başarısız denemenin zaman
+damgasını tutar; yazan tek yer `recordFailedAttempt`.
+
+Denemeler kasa **kilitliyken** olduğu için ortada DEK yok — anahtar pepper'dan türer. Bunun
+dürüst sonucu: bu günlük kasanın anahtar hiyerarşisinin **dışında** ve yem oturumunu tutan
+şey kriptografi değil, arayüz (sınır #17).
+
+Kayıt **sabit boyutludur** ve kasa kurulurken yazılır. Büyüyen bir günlük düz metin bir
+sayaç, yalnızca ilk hatadan sonra var olan bir kayıt ise düz metin bir "burada bir şey oldu"
+biti olurdu. Bu özellikten önce kurulmuş kasalarda ilk açılışta geriye dönük oluşturulur.
+Yazma hatası yutulur: bir denetim izi, kimsenin kendi kasasına erişememesinin sebebi olamaz.
 
 ## Çok slotlu kasa: yem (honeypot) ve panik PIN'i
 
@@ -142,6 +182,7 @@ taşınırsa doğrulama tutmaz.
 | Cihaz yedeğini geri yükleyen kişi | Yedekten dosyalar döner | Kasa açılamaz (pepper taşınmadı) — "yalnızca bu cihaz" vaadinin ters yüzü |
 | Root/jailbreak'li CANLI cihaz | Keystore'u ve süreç belleğini okur | Pepper'ı alabilir → PIN brute-force artık Argon2id hızında; kasa AÇIKKEN DEK bellekte dump edilebilir. **Kapsam dışı** — dürüstçe belirtilir |
 | Omuz sörfü / ekran kaydı | Ekranı izler | Android: FLAG_SECURE ekran görüntüsü/kaydı/son uygulamalar küçük resmini engeller. iOS: ekran görüntüsü ENGELLENEMEZ ama ALGILANIR → anında kilit |
+| Görüntü önbelleği (kapatıldı) | `<cache>` altındaki SDWebImage/Glide dizinlerini okur | **Kapatıldı.** `expo-image`'ın `cachePolicy` varsayılanı `'disk'` ve hiçbir yerde ayarlanmamıştı: baktığın her küçük resim ve her fotoğraf düz olarak `<cache>/decrypted/` DIŞINA yazılıyordu; o dizinler ne kilitte ne açılışta siliniyordu. Artık her `<Image>` `cachePolicy="memory"` kullanıyor, kilitte `Image.clearMemoryCache()`, açılışta bir kez `Image.clearDiskCache()` (eski sürümlerin sızdırdığını temizler). `useImage()`/`Image.loadAsync()` **kullanılmaz** — `cachePolicy: .disk` orada sabit kodlu, geçersiz kılınamıyor. Statik bir test bunu koruyor |
 | Uygulama değiştirici (app switcher) | Snapshot görür | Gizlilik örtüsü hesap makinesi yüzünü çizer; snapshot'ta kasaya dair hiçbir şey yok |
 | **Zorlama (coercion)** | Kullanıcıyı PIN vermeye zorlar | Yem PIN'i inandırıcı ama ayrı bir kasa açar; yem oturumundan gerçek kasanın varlığı görünmez. Son çare panik PIN'i gerçek kasanın anahtarını imha eder. **Sınırları aşağıda** |
 | Uygulamayı açan meraklı | Uygulamaya bakar | Çalışan bir hesap makinesi görür; yanlış PIN + `=` hiçbir tepki üretmez |
@@ -154,8 +195,18 @@ taşınırsa doğrulama tutmaz.
 3. **Bellek sıfırlama best-effort'tur.** JS motoru `Uint8Array` içeriğini kopyalamış
    olabilir; garanti edilen değişmez, DEK'in *diske* asla yazılmamasıdır.
 4. **Flash wear-leveling gerçek güvenli silmeyi engeller.** Temp dosyalar silinir ama
-   fiziksel hücrelerde iz kalabilir. Hafifletme: temp ömrü saniyeler mertebesinde, iOS
-   `NSFileProtectionComplete` cihaz kilitliyken dosyaları ayrıca şifreler.
+   fiziksel hücrelerde iz kalabilir. **Bu sınır büyüdü:** fotoğraflar da artık
+   `<cache>/decrypted/` altına çözülüyor (base64 data URI'si 20 MB'lık bir fotoğrafta
+   ~100 MB tepe bellek yapıyordu — invariant #5'in lafzen ihlali ve OOM'da kasayı
+   gezinirken kilitleyen bir çökme). Yani düz görüntü artık "saniyeler" değil, **görüntüleme
+   oturumu boyunca** (dakikalar mertebesinde) diskte duruyor; pencere dışına çıkan sayfalar,
+   viewer'ın kapanışı ve kilit onu siler.
+
+   Kime yarar? Canlı root'lu saldırgan zaten kapsam dışı ve DEK'i bellekten okuyabiliyor;
+   soğuk imaj için dosya yalnızca kasa açık ve uygulama ön plandayken var, o durumda cihaz
+   zaten ele geçmiş; iOS'ta `NSFileProtectionComplete` cihaz kilitliyken dosyayı ayrıca
+   şifreliyor. Gerçekten kötüleşen tek şey bu maddenin kendisi: wear-leveling penceresi
+   uzadı.
 5. **Metadata sızıntısı:** öğe sayısı, boyutları, çekim zamanları SQLite'ta düz durur
    (sıralama/sorgu için). İçerik değil, varlık bilgisi sızar.
 6. **Backoff sayacı UI caydırıcısıdır.** Root'lu cihaz SecureStore'daki sayacı
@@ -197,6 +248,35 @@ taşınırsa doğrulama tutmaz.
 12. **Hesap makinesi yanlış PIN'de sessizdir.** Bunun bedeli gerçek kullanıcıya çıkar:
     "yanlış mı yazdım yoksa backoff kilidinde miyim" ayrımını göremez. Bu ayrımı gösteren
     her şey, yabancıya da hesap makinesinin bir kapı olduğunu söylerdi.
+
+13. **Albüm sayısı yem kasanın en zayıf noktası.** `COUNT(*) FROM albums` düz okunabiliyor.
+    2000 dosya "çöp birikmiş" diye savuşturulabilir; yem 1 albüm gösterirken tabloda 31
+    satır olması kasıtlı bir düzenlemenin kanıtıdır. Üyelik listesi satırın içinde şifreli
+    (`items_enc`) olduğu için *hangi* öğenin hangi albümde olduğu görünmez — ama satır
+    sayısı görünür.
+14. **`length(items_enc)` albüm boyutunu ±26 öğeye kadar sızdırır** (1024 baytlık kova).
+    `name_enc`, `caption_enc` ve `orig_name_enc` için kova 64 bayt. Dolgu her satıra
+    yazıldığı için "bu öğenin açıklaması var mı" biti kalkıyor; kalan şey uzunluk sınıfı.
+15. **`type='document'` ve belge MIME'ları sınır #5'in genişlemesidir.** `image/jpeg` az şey
+    söyler, `application/x-keepass` çok şey. Ayrıca **`vault/media` ile `vault/thumbs`
+    dosya sayısı farkı belge sayısını veriyor** — belgelerin küçük resmi yok, yani bu sayı
+    veritabanına hiç dokunmadan okunabiliyor.
+16. **Dışa aktarma adları.** Viewer geçicisi `<id>.<ext>` kullanır, yalnızca kullanıcının
+    onayladığı paylaşım orijinal adı taşır. Sınır #4 dizin girdileri için de geçerli: silinen
+    bir dosya adı fiziksel olarak kalabilir.
+17. **Başarısız deneme günlüğünü yem oturumundan gizleyen şey arayüzdür.** Anahtar
+    pepper'dan türüyor (kasa kilitliyken yazmak zorunda), dolayısıyla süreç içinde yem
+    oturumu da teknik olarak çözebilir; yalnızca ekran gösterilmiyor. Pepper'a erişen biri
+    zaten zaman damgalarını okuyabilir — bu, sınır #2'nin (canlı root) bir alt kümesi.
+18. **Yem oturumunun albüm sekmesi de gerçek kasanın albüm sayısıyla yavaşlar.** Sınır
+    #7(a)'daki JS tarafı kapsamlama kanalı yeni bir yüzey kazandı: `ownedRows()` her iki
+    kasanın albüm satırlarını çekip süzüyor.
+19. **Android'de kasadan dışarı paylaşma kapalıdır.** `Sharing.shareAsync` uygulamayı arka
+    plana düşürüyor → otomatik kilit → `wipeDecryptedDir()` alıcının okuyacağı dosyayı
+    siliyor. Kilidi ertelemek bir güvenlik özelliğini paylaşma uğruna devre dışı bırakmak
+    olurdu, o yüzden düğme iOS'ta gösteriliyor, Android'de gösterilmiyor. Toplu paylaşmada
+    öğe başına onay korunuyor — 40 dosya için tek bir toptan onay, tek öğe yolunun verdiği
+    sözden daha zayıf bir söz olurdu.
 
 ## Platform yapılandırması
 

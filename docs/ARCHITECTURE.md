@@ -6,7 +6,8 @@ Tamamen cihaz-içi (offline) bir kasa uygulaması. Üç katman:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  UI (Expo Router ekranları, src/app + src/components)│
+│  UI (rotalar src/app · ekran gövdeleri src/screens ·  │
+│      bileşenler src/components)                      │
 ├─────────────────────────────────────────────────────┤
 │  Oturum & durum (zustand: stores/session, settings)  │
 ├──────────────┬──────────────┬───────────────────────┤
@@ -32,23 +33,29 @@ src/
     (vault)/
       _layout.tsx         # FLAG_SECURE, ekran görüntüsü tepkisi, panik hareketi,
                           # hareketsizlik kilidi, vault Stack
-      (tabs)/             # Galeri (index) / Notlar / Ayarlar
+      (tabs)/             # Galeri (index) / Albümler / Notlar / Ayarlar
       camera.tsx          # tam ekran modal kamera (foto+video)
-      media/[id].tsx      # tam ekran görüntüleyici (paylaş / sil)
-      note/[id].tsx       # not editörü ('new' = yeni not)
+      media/[id].tsx      # kaydırmalı görüntüleyici — gövdesi src/screens/media-viewer
+      note/[id].tsx       # not editörü ('new' = yeni not) + kontrol listesi modu
+      album/[id].tsx      # tek albüm (yeniden adlandır / sil / öğe çıkar)
       change-pin.tsx      # PIN değiştirme (modal) — oturumun KENDİ slotunu değiştirir
       decoy.tsx           # yem kasa + panik PIN yönetimi (modal, YALNIZCA primary)
-  components/             # calculator, pin-pad, privacy-cover, thumb-tile, progress-overlay…
+      attempts.tsx        # başarısız deneme günlüğü (modal, YALNIZCA primary)
+  screens/                # rota dosyasına sığmayan ekran gövdeleri (media-viewer)
+  components/             # calculator, pin-pad, privacy-cover, thumb-tile, progress-overlay,
+                          # empty-state, media/{photo,video,document}-page
   hooks/                  # use-auto-lock, use-inactivity-lock, use-panic-gesture,
                           # use-media-items, use-notes, use-thumbnail
   lib/
     crypto/               # primitives (quick-crypto sarmalayıcı), keys (KDF/slot kaydı/escrow),
+                          # attempt-log (kilitliyken yazılan günlük),
                           # format (.enc header), stream (chunked AEAD), fields (DB alanları)
-    db/                   # connection (open/migrate, dışa açılmaz), index (meta),
-                          # schema, scope (VaultContext), backfill, media-repo, notes-repo
-    media/                # capture (ingest), import (sistem seçicisi),
-                          # viewer-cache (decrypt yaşam döngüsü), share
-    base64.ts, paths.ts
+    db/                   # connection (open/migrate, dışa açılmaz), index (meta), schema,
+                          # scope (VaultContext), backfill, media-repo, notes-repo, albums-repo
+    media/                # capture (ingest), import (sistem seçicisi), photo-cache (fotoğraf
+                          # LRU'su), gallery-order (filtre/sıra, saf), viewer-cache, share
+    notes/                # checklist (saf '- [ ]' ayrıştırıcısı)
+    activity.ts, base64.ts, paths.ts
   stores/                 # session (kilit durum makinesi + VaultContext), settings
   test/                   # jest shim'leri (quick-crypto→node:crypto, SecureStore, FS,
                           # SQLite→node:sqlite, expo-crypto)
@@ -78,8 +85,11 @@ görmesi gerekir.
 Arayüzün sorabileceği **tek** soru `useIsPrimary()`'dir; `decoy` ile `duress` oturumları
 ekranda birbirinden ayırt edilemez olmak zorundadır.
 
-- Ayarlar → "Yem kasa" satırı yalnızca primary oturumda render edilir; `decoy.tsx` ayrıca
-  mount'ta rolü yeniden kontrol edip geri döner.
+- Ayarlar → "Yem kasa" ve "Başarısız denemeler" satırları yalnızca primary oturumda render
+  edilir; `decoy.tsx` ayrıca mount'ta rolü yeniden kontrol edip geri döner.
+- **Albümler ve belgeler iki oturumda birebir aynıdır** — bu özelliklerin hiçbir yerinde
+  `useIsPrimary()` yok. Albüm oluşturamayan bir yem kasa, tam olarak invariant #8'in
+  yasakladığı ipucudur.
 - Ayarlar → "Kasayı sıfırla" iki oturumda birebir aynı metni ve akışı gösterir; yalnızca
   sonucu farklıdır (primary: `destroy()`, yem: `wipeOwnContent()`).
 - `change-pin.tsx` değişmedi — `session.changePin` rolü kendi içinde kapsıyor.
@@ -111,8 +121,12 @@ rotaları otomatik olarak erişilmez olur.
 Kilit tetikleyicileri:
 - **Arka plan:** `AppState` dinleyicisi (`use-auto-lock`). `autoLockSeconds = 0` ⇒ arka
   plana geçer geçmez kilit; aksi halde dönüşte geçen süreye bakılır.
-- **Hareketsizlik:** vault kökündeki capture-phase responder her dokunuşta son etkinlik
-  zaman damgasını tazeler; `use-inactivity-lock` 15 sn'de bir süreyi kontrol eder. Süre
+- **Hareketsizlik:** son etkinlik damgası artık `lib/activity.ts`'te, modül seviyesinde.
+  Vault kökündeki capture-phase responder **ve** her gesture-handler jesti (`onBegin` →
+  `runOnJS(noteActivity)`) onu tazeler. Damga hook'un içindeyken kaydırmanın onu tazelemesi
+  garanti değildi: RNGH dokunuşları native tarafta sahiplenince RN responder'ı hiç
+  çalışmayabiliyor, yani fotoğraflar arasında gezinmek hareketsizlik gibi görünüp kasayı
+  gezinirken kilitleyebiliyordu. `use-inactivity-lock` 15 sn'de bir süreyi kontrol eder. Süre
   Ayarlar'dan seçilir (`meta.inactivity_seconds`, varsayılan 5 dk).
   **`session.busy > 0` iken bu sayaç beklemeye alınır** — büyük bir video şifrelemesi
   dakikalarca sürüyor ve hiç dokunma üretmiyor, araya girmek pipeline'ın hâlâ kullandığı
@@ -161,20 +175,39 @@ yarım kayıt oluşmaz).
 
 | İçerik | Yöntem | Neden |
 |---|---|---|
-| Thumbnail (grid) | Belleğe çöz → base64 data-URI → `expo-image`; 80 girdilik LRU | Küçük (30-60 KB); düz veri diske hiç değmez |
-| Tam boy fotoğraf | Belleğe çöz → data-URI (tek seferde bir tane, cache'lenmez) | Düz fotoğraf diske değmez |
+| Thumbnail (grid) | Belleğe çöz → base64 data-URI → `expo-image`; 300 girdilik LRU | Küçük (~40 KB); düz veri diske hiç değmez |
+| Tam boy fotoğraf | `<cache>/decrypted/p-<id>.<ext>`'e çöz → `expo-image` diskten okur; 7 girdi / 96 MiB LRU, seri kuyruk (`lib/media/photo-cache.ts`) | Data-URI yolu 20 MB'lık bir fotoğrafta ~100 MB tepe bellek yapıyordu; dosya yolunda tepe ~2 MiB. Bedeli SECURITY.md sınır #4'te |
 | Video | `<cache>/decrypted/<id>.<ext>`'e çöz (ilerleme çubuğu) → `expo-video` | expo-video'ya stream-decrypt beslenemez; temp dosya zorunlu |
+| Belge | `<cache>/decrypted/<id>.<ext>`'e çöz → `react-native-pdf` | Aynı gerekçe; **yalnızca basınca** çözülür |
+
+**Her `<Image>` `cachePolicy="memory"` kullanmak zorunda** ve `useImage()`/`Image.loadAsync()`
+kullanılmaz — `cachePolicy: .disk` orada sabit kodlu. Statik bir test
+(`components/__tests__/image-cache-policy.test.ts`) her ikisini de zorluyor. Gerekçe:
+SECURITY.md tehdit tablosundaki "görüntü önbelleği" satırı.
+
+**Önden yükleme yalnızca fotoğrafları çözer** (`prefetchPhotos`, `type !== 'photo'` süzgeci).
+Bir videonun yanından kaydırıp geçmek 500 MB'ı diske çözmeye başlamamalı; bu kural tek bir
+yerde zorlanıyor.
 
 ### Temp dosya yaşam döngüsü
 
 `<cache>/decrypted/` şu anlarda **tamamen** silinir:
-1. Her kilitlemede (`session.lock()`)
+1. Her kilitlemede (`session.lock()`) — dönüş değeri kontrol edilir ve bir kez yeniden
+   denenir; hayatta kalan bir dosya invariant #2 ihlalidir, sessizce geçilemez
 2. Her soğuk açılışta (`session.init()`) — çökme/zorla kapatma artıklarını temizler
-3. Video görüntüleyici kapanırken (best effort, tekil dosya)
+
+Tekil silmeler (best effort):
+3. Video/belge sayfası render penceresinden çıkarken
+4. Fotoğraf LRU'sundan tahliye olurken; viewer kapanınca tüm `p-*` dosyaları
+   (`wipeDecryptedDir()` **değil** — uçan bir paylaşım `export-*` yazıyor olabilir)
+5. Paylaşım bittiğinde (`share.ts`, `finally`)
 
 ### Dışa aktarma — `lib/media/share.ts`
 
 Açık onay ("bu içerik kasadan çıkıyor") → temp'e çöz → OS paylaşım ekranı → temp sil.
+Toplu paylaşmada onay **öğe başına** korunur. **Android'de kapalı** (`canShareOut()`):
+`shareAsync` uygulamayı arka plana düşürüyor, otomatik kilit devreye giriyor ve
+`wipeDecryptedDir()` alıcının okuyacağı dosyayı siliyor.
 
 ## Veri erişim deseni
 

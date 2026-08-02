@@ -5,40 +5,40 @@
  * A polled deadline rather than a self-rearming timeout: a touch only has to
  * move a timestamp, and the "is something in flight" question gets asked every
  * tick instead of once when the timer was set.
+ *
+ * The timestamp lives in lib/activity so gesture handlers can stamp it too —
+ * see the note there about swipes otherwise reading as inactivity.
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 
+import { lastActivityAt, noteActivity, resetActivity } from '../lib/activity';
 import { useSession } from '../stores/session';
 import { useSettings } from '../stores/settings';
 
 const CHECK_MS = 15 * 1000;
 
 export function useInactivityLock(): { onUserInteraction: () => boolean } {
-  // Stamped in the effect, not at render: reading the clock during render is
-  // impure and the compiler rejects it.
-  const lastActivity = useRef(0);
-
   useEffect(() => {
-    lastActivity.current = Date.now();
+    resetActivity();
     const interval = setInterval(() => {
       const { status, busy, lock } = useSession.getState();
       if (status !== 'unlocked') return;
-      // Encrypting a large video takes minutes and produces no touch events.
-      // Locking there would zeroize the keys the pipeline is still using, so
-      // busy work counts as activity. Deliberate locks — manual, shake,
-      // screenshot, backgrounding — are unaffected; only this idle timer waits.
+      // Encrypting a large video or playing one back produces no touch events.
+      // Locking there would zeroize keys still in use, so busy work counts as
+      // activity. Deliberate locks — manual, shake, screenshot, backgrounding —
+      // are unaffected; only this idle timer waits.
       if (busy > 0) {
-        lastActivity.current = Date.now();
+        noteActivity();
         return;
       }
       const timeoutMs = useSettings.getState().inactivitySeconds * 1000;
-      if (Date.now() - lastActivity.current >= timeoutMs) lock();
+      if (Date.now() - lastActivityAt() >= timeoutMs) lock();
     }, CHECK_MS);
     return () => clearInterval(interval);
   }, []);
 
   const onUserInteraction = useCallback(() => {
-    lastActivity.current = Date.now();
+    noteActivity();
     return false; // never claim the responder — just observe touches
   }, []);
 

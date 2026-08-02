@@ -2,7 +2,7 @@ import { Stack, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
-import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Calculator } from '@/components/calculator';
 import { PrivacyCover } from '@/components/privacy-cover';
@@ -51,7 +51,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -72,6 +72,6 @@ export default function RootLayout() {
         </Stack.Protected>
       </Stack>
       <PrivacyCover visible={covered} />
-    </View>
+    </GestureHandlerRootView>
   );
 }

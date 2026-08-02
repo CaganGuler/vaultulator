@@ -38,6 +38,7 @@ import { backfillRowTags } from '../lib/db/backfill';
 import { deleteAllMediaOf, listAllReferencedFiles } from '../lib/db/media-repo';
 import { deleteAllNotesOf } from '../lib/db/notes-repo';
 import type { VaultContext } from '../lib/db/scope';
+import { forgetPhotoTemps } from '../lib/media/photo-cache';
 import { clearThumbCache } from '../lib/media/viewer-cache';
 import { ensureVaultDirs, sweepOrphanFiles, wipeDecryptedDir, wipeVaultFiles } from '../lib/paths';
 
@@ -173,6 +174,7 @@ export const useSession = create<SessionState>((set, get) => ({
     // before giving up; a writer may still have held a handle.
     if (wipeDecryptedDir().length > 0) wipeDecryptedDir();
     clearThumbCache();
+    forgetPhotoTemps(); // the files are gone; drop the index that points at them
     // Without this the decoded bitmap of every thumbnail viewed this session
     // stays in expo-image's native memory cache after the vault is locked.
     void Image.clearMemoryCache().catch(() => undefined);

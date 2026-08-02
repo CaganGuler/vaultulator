@@ -17,8 +17,37 @@ npm run lint          # eslint
 npx expo prebuild     # native projeleri üret/güncelle
 ```
 
-Commit öncesi `npm run verify` geçmeli; husky pre-commit (değişen dosyalarda lint +
-typecheck) ve pre-push (tam verify) bunu zorluyor, GitHub Actions da aynısını koşuyor.
+Derleme, cihaza kurulum ve **imzalama** için `docs/BUILD.md`. Orada tek bir kural var ki
+ihlali geri alınamaz: cihaza giden her sürüm aynı `bundleIdentifier` ve aynı team/sertifika
+ile imzalanmalı, yoksa Keychain'deki pepper erişilemez olur ve kasa kalıcı olarak gider.
+
+## Commit kuralları
+
+Commit'ler yalnızca repo sahibinin adıyla atılır: commit mesajlarına ve PR açıklamalarına
+`Co-Authored-By: Claude ...` gibi bir AI/araç imzası **eklenmez**.
+(`.claude/settings.json → attribution` bunu Claude Code için otomatik kapatıyor;
+kural diğer araçlar için de geçerli.)
+
+## Otomatik korumalar (bunlara çarpınca "düzeltme" değil, tasarım)
+
+Invariant'ların çoğu hatırlamaya bırakılmadı; araçlar zorluyor. Bir kurala çarptığında
+çözüm onu susturmak değil, kuralın işaret ettiği yolu kullanmaktır.
+
+| Araç | Ne zorluyor |
+|---|---|
+| `no-console: error` | Invariant #1 — düz anahtar materyali log'a sızmasın. Test dizinlerinde kapalı |
+| `no-restricted-imports: expo-media-library` | Invariant #3 — galeriye yazma yolu bir import'la eklenemez |
+| `no-restricted-imports: **/db/connection` | Invariant #7 — `getDb()` `src/lib/db` dışına çıkmaz; `VaultContext` alan bir repo fonksiyonu kullan (`src/lib/db/**` ve testler muaf) |
+| `image-cache-policy.test.ts` | Invariant #2 — her `<Image>` `cachePolicy` vermek zorunda, `useImage`/`Image.loadAsync` yasak. Statik kaynak taraması (yorumları soyup arar; yorum içindeki kelimeyi sayan ilk sürümü prop yokken de geçiyordu) |
+| Dizin başına coverage tabanı | Invariant #6 — `src/lib/crypto` ≥ %90/95, `src/lib/db` ≥ %88, `src/stores` ≥ %55; global taban %28 |
+| husky pre-commit → `lint-staged` | Değişen dosyalarda eslint (`--max-warnings=0 --fix`) + tam typecheck |
+| husky pre-push → `npm run verify` | CI ile birebir aynı komut, kırmızı build sürpriz olmasın |
+| `.github/workflows/ci.yml` | `verify` + `expo-doctor`. `npm audit` ayrı ve **bilerek gate değil**: mevcut uyarılar bundle'a girmeyen bir build-time transitive bağımlılıktan (uuid ← xcode ← @expo/config-plugins) geliyor ve `audit fix --force` expo'yu on bir major sürüm geriye alıyor |
+
+**Kapsam boşlukları kasıtlı.** `src/app` coverage'a hiç dahil değil (rota dosyaları ince).
+`src/components/media` ve `src/screens` %0'da duruyor ve **öyle kalmalı** — worklet/jest
+mock'larıyla yazılacak test, mock'un kurulduğunu doğrular, yakınlaştırmanın çalıştığını
+değil. Bu boşluğu "kapatmak" için yazılan test negatif değerlidir.
 
 ## Değişmezler (invariants) — asla ihlal etme
 
@@ -78,6 +107,9 @@ typecheck) ve pre-push (tam verify) bunu zorluyor, GitHub Actions da aynısını
   zustand yalnızca oturum/ayarlar için. react-query/redux ekleme.
 - Stil: `src/theme.ts` sabitleri; koyu tema tek kaynak.
 - Dosya adları kebab-case; path alias `@/* → src/*`.
+- `PIN_LENGTH` (`lib/crypto/keys.ts`) tek kaynaktır ve **iki tüketicisi anlaşmak zorunda**:
+  `pin-pad` o kadar nokta çiziyor, `calculator` tam o kadar çıplak haneyi kilit denemesi
+  sayıyor. Birini değiştirip diğerini bırakmak ön kapıyı sessizce çalışmaz hale getirir.
 
 ## Reanimated / gesture-handler kuralları
 
@@ -119,3 +151,6 @@ invariant #6'yı zorunlu kılan mekanizma budur.
 - Rota/modül ekleme, temp dosya yaşam döngüsü → `docs/ARCHITECTURE.md`
 - Kamuflajı ya da inkâr edilebilirliği etkileyen her şey → `docs/SECURITY.md` "Dürüst
   sınırlar". Yeni bir sızıntı kanalı kapatılamıyorsa sessizce bırakılmaz, yazılır.
+- Native bağımlılık, `app.json`, imza/kurulum yordamı → `docs/BUILD.md`
+- Invariant sayısı ya da listesi değişirse → `CLAUDE.md` **ve** `AGENTS.md` (AGENTS.md sayıyı
+  metin olarak yazıyor, ikisi ayrışabiliyor)

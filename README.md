@@ -112,10 +112,14 @@ cannot afford.
 The native crypto module (`react-native-quick-crypto`) means **Expo Go does not work**;
 use a dev client.
 
+> ⚠️ Installing a build signed with a **different team or bundle identifier** than the
+> one already on the device makes the Keychain pepper unreachable and destroys that
+> device's vault permanently. See [docs/BUILD.md](docs/BUILD.md) before installing.
+
 ```bash
 npm install
 
-# Generate native projects (ios/ and android/)
+# Generate native projects (ios/ and android/ — gitignored, app.json is the source of truth)
 npx expo prebuild
 
 # Run
@@ -129,7 +133,7 @@ npx expo run:android    # Android emulator / device
 | `npm test` | Jest unit tests (crypto core: round-trip, tamper, backoff) |
 | `npm run typecheck` | TypeScript check (`tsc --noEmit`) |
 | `npm run lint` | ESLint |
-| `npm run prebuild` | Regenerate native projects |
+| `npm run prebuild` | Regenerate native projects (`ios/` and `android/` are generated, not committed) |
 
 Tests run the crypto against a deterministic `node:crypto` shim and the database
 against real SQL (`node:sqlite`), so migration, BLOB, and rollback behavior match the
@@ -145,6 +149,7 @@ device. Coverage thresholds force near-complete coverage of `src/lib/crypto` and
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module map, media pipeline, lock state machine, route map |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model, key hierarchy, `.enc` format spec, honest limits |
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | SQLite schema, file format byte layout, directory layout, SecureStore inventory |
+| [docs/BUILD.md](docs/BUILD.md) | Build and prebuild semantics, and the signing rule that can destroy the vault |
 | [CLAUDE.md](CLAUDE.md) | Repo rules and invariants |
 
 ## Tech

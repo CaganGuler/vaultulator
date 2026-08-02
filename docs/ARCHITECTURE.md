@@ -45,7 +45,8 @@ src/
   components/             # calculator, pin-pad, privacy-cover, thumb-tile, progress-overlay,
                           # empty-state, media/{photo,video,document}-page
   hooks/                  # use-auto-lock, use-inactivity-lock, use-panic-gesture,
-                          # use-media-items, use-notes, use-thumbnail
+                          # use-media-items, use-notes, use-thumbnail,
+                          # use-gallery-page (viewer'ın sayfalayacağı liste)
   lib/
     crypto/               # primitives (quick-crypto sarmalayıcı), keys (KDF/slot kaydı/escrow),
                           # attempt-log (kilitliyken yazılan günlük),
@@ -188,6 +189,40 @@ SECURITY.md tehdit tablosundaki "görüntü önbelleği" satırı.
 **Önden yükleme yalnızca fotoğrafları çözer** (`prefetchPhotos`, `type !== 'photo'` süzgeci).
 Bir videonun yanından kaydırıp geçmek 500 MB'ı diske çözmeye başlamamalı; bu kural tek bir
 yerde zorlanıyor.
+
+### Galeri → viewer devri (rota parametresiyle)
+
+Viewer, galerinin gördüğü listeyi **yeniden sorgular**; filtre ve sıra rota query
+parametresiyle taşınır (`/media/<id>?filter=photo&order=new`). Ortak saf yardımcı
+`lib/media/gallery-order.ts` iki ekranın ayrışmasını engelliyor, `use-gallery-page` listeyi
+**mount'ta bir kez** yükler (odakta değil: viewer her zaman odakta ve yeniden sorgu
+kullanıcının parmağının altında sayfaları yeniden dizerdi).
+
+Modül seviyesinde bir "handoff store" **bilerek reddedildi**: derin bağlantıda ve soğuk
+açılışta çalışmaz, ikinci bir doğruluk kaynağı olur ve `lock()` ağacı söktükten sonra bile
+kasanın id/boyut/zaman verisini bellekte tutar — SECURITY.md sınır #7(a) bunu zaten açık bir
+kanal olarak sayıyor, ikincisini eklemeyelim. Bozuk bir parametre `'all'`'a düşer
+(`gallery-order.test.ts`).
+
+### `session.busy`: kilidi *geçici olarak* askıya alma sözleşmesi
+
+`beginBusy()` bir releaser döndürür ve hareketsizlik sayacını askıya alır. Kullanıldığı
+yerler: içe aktarma/çekim şifrelemesi, not editörü açıkken, video **gerçekten oynarken**.
+
+İki kural:
+
+1. **Releaser sızdırılamaz.** Sızan bir releaser kasanın bir daha hiç hareketsizlikten
+   kilitlenmemesi demektir — bu bir hata değil, güvenlik gerilemesidir. Bu yüzden
+   `PlayingVideo` releaser'ı ref'te tutup effect cleanup'ında koşulsuz bırakıyor ve
+   `session.test.ts` `busy`'nin 0'a döndüğünü doğruluyor.
+2. **`busy` "ekran açık" boyunca tutulmaz.** Bir fotoğrafın üstünde bırakılan telefonun hiç
+   kilitlenmemesi, semptomu korumayı kaldırarak çözmek olurdu. Kasıtlı kilitler (elle,
+   sallama, ekran görüntüsü, arka plan) `busy`'ye hiç bakmaz.
+
+Bir işlem sırasında kilit gelirse `assertStillCurrent(ctx)` `SessionChangedError` atar;
+çağıranlar bunu "kasa kilitlendi, tekrar dene" olarak gösterir ve yarım yazılmış ciphertext'i
+siler. Sessiz bir devam, sıfırlanmış anahtarla etiketlenmiş — hiçbir kasaya ait olmayan,
+görünmez ve kurtarılamaz — bir satır yazardı.
 
 ### Temp dosya yaşam döngüsü
 

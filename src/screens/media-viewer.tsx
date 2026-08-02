@@ -21,8 +21,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PhotoPage } from '@/components/media/photo-page';
+import { DocumentPage } from '@/components/media/document-page';
 import { VideoPage } from '@/components/media/video-page';
-import { deleteMediaItem, type MediaItem } from '@/lib/db/media-repo';
+import { deleteMediaItem, getMediaText, type MediaItem } from '@/lib/db/media-repo';
 import { useGalleryPage } from '@/hooks/use-gallery-page';
 import type { MediaFilter } from '@/lib/media/gallery-order';
 import { clearPhotoTemps, evictPhoto, getPhotoFileUri, prefetchPhotos, setPinnedPhotos } from '@/lib/media/photo-cache';
@@ -54,6 +55,7 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
   const [uris, setUris] = useState<Record<string, string>>({});
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const [names, setNames] = useState<Record<string, string>>({});
 
   const listRef = useRef<FlatList<MediaItem>>(null);
 
@@ -85,6 +87,13 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
       void getThumbnailDataUri(ctx.dek, item)
         .then((uri) => uri && setThumbs((prev) => ({ ...prev, [item.id]: uri })))
         .catch(() => undefined);
+    }
+
+    // Documents need their original filename, which is encrypted per row.
+    if (focused.type === 'document' && names[focused.id] === undefined) {
+      void getMediaText(ctx, focused.id)
+        .then((text) => setNames((prev) => ({ ...prev, [focused.id]: text?.originalName ?? '' })))
+        .catch(() => setNames((prev) => ({ ...prev, [focused.id]: '' })));
     }
 
     if (focused.type === 'photo' && !uris[focused.id]) {
@@ -142,6 +151,8 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
     ({ item, index: itemIndex }: { item: MediaItem; index: number }) =>
       item.type === 'video' ? (
         <VideoPage item={item} placeholderUri={thumbs[item.id] ?? null} active={itemIndex === index} />
+      ) : item.type === 'document' ? (
+        <DocumentPage item={item} originalName={names[item.id] ?? ''} active={itemIndex === index} />
       ) : (
         <PhotoPage
           uri={uris[item.id] ?? null}
@@ -152,7 +163,7 @@ export function MediaViewerScreen({ id, filter, oldestFirst }: Props) {
           pagerRef={listRef}
         />
       ),
-    [thumbs, uris, failedIds, index],
+    [thumbs, uris, failedIds, names, index],
   );
 
   if (loading) {

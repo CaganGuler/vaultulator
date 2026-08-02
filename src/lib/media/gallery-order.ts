@@ -9,9 +9,9 @@
  */
 import type { MediaItem } from '../db/media-repo';
 
-export type MediaFilter = 'all' | 'photo' | 'video';
+export type MediaFilter = 'all' | 'photo' | 'video' | 'document';
 
-const FILTERS: readonly MediaFilter[] = ['all', 'photo', 'video'];
+const FILTERS: readonly MediaFilter[] = ['all', 'photo', 'video', 'document'];
 
 /** Route params are untrusted input; anything unexpected means "show all". */
 export function parseFilter(raw: string | undefined): MediaFilter {

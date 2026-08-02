@@ -1,5 +1,6 @@
 import { getDb } from './connection';
 import { ownedRows, owns, tagFor, type TaggedRow, type VaultContext } from './scope';
+import { decryptField, encryptField, padToBucket, unpad } from '../crypto/fields';
 import { evictThumb } from '../media/viewer-cache';
 import { deleteIfExists, mediaFileUri, thumbFileUri } from '../paths';
 
@@ -20,6 +21,8 @@ export interface MediaItem {
 
 interface MediaRow extends TaggedRow {
   id: string;
+  caption_enc: Uint8Array | null;
+  orig_name_enc: Uint8Array | null;
   type: MediaType;
   file_name: string;
   thumb_name: string | null;
@@ -46,11 +49,17 @@ function fromRow(row: MediaRow): MediaItem {
   };
 }
 
-export async function insertMediaItem(ctx: VaultContext, item: MediaItem): Promise<void> {
+export interface MediaExtras {
+  /** The file's name where it came from. User-identifying, so encrypted. */
+  originalName?: string;
+  caption?: string;
+}
+
+export async function insertMediaItem(ctx: VaultContext, item: MediaItem, extras: MediaExtras = {}): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    `INSERT INTO media_items (id, type, file_name, thumb_name, mime, size_bytes, width, height, duration_ms, created_at, vault_tag)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO media_items (id, type, file_name, thumb_name, mime, size_bytes, width, height, duration_ms, created_at, vault_tag, caption_enc, orig_name_enc)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     item.id,
     item.type,
     item.fileName,
@@ -62,7 +71,64 @@ export async function insertMediaItem(ctx: VaultContext, item: MediaItem): Promi
     item.durationMs,
     item.createdAt,
     tagFor(ctx, item.id),
+    // Always written, even when empty: a NULL-versus-blob distinction would
+    // be a free "this item has a caption" bit for anyone reading the file.
+    encodeText(ctx, item.id, 'caption', extras.caption ?? ''),
+    encodeText(ctx, item.id, 'orig_name', extras.originalName ?? ''),
   );
+}
+
+const TEXT_BUCKET = 64;
+
+function encodeText(ctx: VaultContext, id: string, column: string, value: string): Uint8Array {
+  return encryptField(ctx.dbKey, 'media_items', id, column, padToBucket(value, TEXT_BUCKET));
+}
+
+function decodeText(ctx: VaultContext, id: string, column: string, blob: Uint8Array | null): string {
+  if (!blob) return ''; // pre-v3 row
+  return unpad(decryptField(ctx.dbKey, 'media_items', id, column, blob));
+}
+
+/** Decrypts one item's caption and original filename. Not done in list queries. */
+export async function getMediaText(
+  ctx: VaultContext,
+  id: string,
+): Promise<{ caption: string; originalName: string } | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<MediaRow>('SELECT * FROM media_items WHERE id = ?', id);
+  if (!row || !owns(ctx, row)) return null;
+  return {
+    caption: decodeText(ctx, id, 'caption', row.caption_enc),
+    originalName: decodeText(ctx, id, 'orig_name', row.orig_name_enc),
+  };
+}
+
+export async function setCaption(ctx: VaultContext, id: string, caption: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE media_items SET caption_enc = ? WHERE id = ? AND vault_tag = ?',
+    encodeText(ctx, id, 'caption', caption),
+    id,
+    tagFor(ctx, id),
+  );
+}
+
+/**
+ * Every owned caption, decrypted once.
+ *
+ * Called when the search field opens, not per keystroke: listMediaItems is the
+ * gallery's hot path and currently does zero crypto over ~2000 rows, which is
+ * worth keeping.
+ */
+export async function loadCaptionIndex(ctx: VaultContext): Promise<Map<string, string>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<MediaRow>('SELECT id, vault_tag, caption_enc FROM media_items');
+  const index = new Map<string, string>();
+  for (const row of ownedRows(ctx, rows)) {
+    const caption = decodeText(ctx, row.id, 'caption', row.caption_enc);
+    if (caption) index.set(row.id, caption);
+  }
+  return index;
 }
 
 export async function listMediaItems(ctx: VaultContext): Promise<MediaItem[]> {

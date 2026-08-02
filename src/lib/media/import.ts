@@ -13,9 +13,10 @@
  * in the gallery, so the user has to delete it there themselves. Until they
  * do, the vault copy is not a secret.
  */
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 
-import { ingestCapturedPhoto, ingestCapturedVideo } from './capture';
+import { ingestCapturedPhoto, ingestCapturedVideo, ingestPickedDocument } from './capture';
 import type { MediaItem } from '../db/media-repo';
 import type { VaultContext } from '../db/scope';
 import type { StreamProgress } from '../crypto/stream';
@@ -32,6 +33,61 @@ export interface ImportResult {
   imported: MediaItem[];
   /** Assets that failed; the rest still went in. */
   failed: number;
+}
+
+export interface PickedDocument {
+  uri: string;
+  name: string;
+  mimeType: string;
+}
+
+/**
+ * Opens the system document picker.
+ *
+ * `copyToCacheDirectory` is mandatory, not an optimisation: Android hands back
+ * `content://` URIs that expo-file-system's File cannot open at all.
+ */
+export async function pickDocuments(): Promise<PickedDocument[]> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (result.canceled) return [];
+  return result.assets.map((asset) => ({
+    uri: asset.uri,
+    name: asset.name,
+    mimeType: asset.mimeType ?? 'application/octet-stream',
+  }));
+}
+
+export async function importDocuments(
+  ctx: VaultContext,
+  documents: PickedDocument[],
+  onProgress?: (progress: ImportProgress) => void,
+): Promise<ImportResult> {
+  const imported: MediaItem[] = [];
+  let failed = 0;
+
+  for (const [index, doc] of documents.entries()) {
+    const current = index + 1;
+    onProgress?.({ current, total: documents.length });
+    try {
+      imported.push(
+        await ingestPickedDocument({
+          ctx,
+          sourceUri: doc.uri,
+          originalName: doc.name,
+          mime: doc.mimeType,
+          onProgress: (stream) => onProgress?.({ current, total: documents.length, stream }),
+        }),
+      );
+    } catch (e) {
+      if (e instanceof Error && e.name === 'SessionChangedError') throw e;
+      failed++;
+    }
+  }
+
+  return { imported, failed };
 }
 
 /** Opens the system picker. Returns [] if the user cancels. */
@@ -78,6 +134,7 @@ export async function importAssets(
               sourceUri: asset.uri,
               width: asset.width,
               height: asset.height,
+              originalName: asset.fileName ?? undefined,
             });
       imported.push(item);
     } catch (e) {

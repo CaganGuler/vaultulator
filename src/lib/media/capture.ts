@@ -34,6 +34,9 @@ interface IngestPhotoInput {
   sourceUri: string;
   width?: number;
   height?: number;
+  /** Set for library imports. Written for photos too, so that the column's
+   *  presence does not by itself mark a row as a document. */
+  originalName?: string;
 }
 
 export async function ingestCapturedPhoto(input: IngestPhotoInput): Promise<MediaItem> {
@@ -63,7 +66,7 @@ export async function ingestCapturedPhoto(input: IngestPhotoInput): Promise<Medi
     // tagged with an all-zero key and therefore invisible to every vault; the
     // catch below removes the ciphertext we already wrote.
     assertStillCurrent(input.ctx);
-    await insertMediaItem(input.ctx, item);
+    await insertMediaItem(input.ctx, item, { originalName: input.originalName });
     return item;
   } catch (e) {
     // never leave orphaned ciphertext behind on a failed ingest
@@ -73,6 +76,59 @@ export async function ingestCapturedPhoto(input: IngestPhotoInput): Promise<Medi
   } finally {
     deleteIfExists(input.sourceUri);
     if (thumbTempUri) deleteIfExists(thumbTempUri);
+  }
+}
+
+/**
+ * A document the user picked from the system file picker.
+ *
+ * Takes the streaming path, never the photo one: getPhotoFileUri-style
+ * whole-file handling would turn a 50 MB PDF into a ~67 MB string
+ * (invariant #5). Documents have no thumbnail — rendering a PDF's first page
+ * needs a native rasteriser, and putting secret content through one to
+ * produce a preview is not worth it — so the tile shows a type glyph instead.
+ */
+interface IngestDocumentInput {
+  ctx: VaultContext;
+  sourceUri: string;
+  /** The picker's filename. Stored encrypted; it identifies the user. */
+  originalName: string;
+  mime: string;
+  onProgress?: (progress: StreamProgress) => void;
+}
+
+export async function ingestPickedDocument(input: IngestDocumentInput): Promise<MediaItem> {
+  const id = Crypto.randomUUID();
+  const sizeBytes = new File(input.sourceUri).size ?? 0;
+  try {
+    const item: MediaItem = {
+      id,
+      type: 'document',
+      fileName: `${id}.enc`,
+      thumbName: null,
+      mime: input.mime,
+      sizeBytes,
+      width: null,
+      height: null,
+      durationMs: null,
+      createdAt: Date.now(),
+    };
+    await encryptFile({
+      dek: input.ctx.dek,
+      itemId: id,
+      sourceUri: input.sourceUri,
+      destUri: mediaFileUri(item.fileName),
+      onProgress: input.onProgress,
+    });
+    assertEncryptedExists(item);
+    assertStillCurrent(input.ctx);
+    await insertMediaItem(input.ctx, item, { originalName: input.originalName });
+    return item;
+  } catch (e) {
+    deleteIfExists(mediaFileUri(`${id}.enc`));
+    throw e;
+  } finally {
+    deleteIfExists(input.sourceUri);
   }
 }
 

@@ -23,7 +23,15 @@ import {
   setAlbumItems,
 } from '../albums-repo';
 import { getDb, destroyDb } from '../connection';
-import { deleteMediaItem, insertMediaItem, listMediaItems, type MediaItem } from '../media-repo';
+import {
+  deleteMediaItem,
+  getMediaText,
+  insertMediaItem,
+  listMediaItems,
+  loadCaptionIndex,
+  setCaption,
+  type MediaItem,
+} from '../media-repo';
 import { tagFor, type VaultContext } from '../scope';
 import { __reset as resetSecureStore } from '../../../test/secure-store-mock';
 import { __reset as resetSqlite } from '../../../test/expo-sqlite-node-shim';
@@ -267,5 +275,54 @@ describe('field binding', () => {
 
     // The column is in the AAD too.
     await expect(getAlbum(primary, album.id)).rejects.toThrow();
+  });
+});
+
+describe('documents and captions', () => {
+  it('stores an encrypted caption and original name, scoped per vault', async () => {
+    await insertMediaItem(
+      primary,
+      media('doc', { type: 'document', mime: 'application/pdf', thumbName: null }),
+      { originalName: '2024-vergi.pdf' },
+    );
+
+    expect(await getMediaText(primary, 'doc')).toEqual({ caption: '', originalName: '2024-vergi.pdf' });
+    // A filename identifies the user far more than pixel dimensions do, so the
+    // decoy must not be able to read it.
+    expect(await getMediaText(decoy, 'doc')).toBeNull();
+
+    await setCaption(primary, 'doc', 'Beyanname');
+    expect((await getMediaText(primary, 'doc'))?.caption).toBe('Beyanname');
+
+    // The decoy cannot overwrite it either.
+    await setCaption(decoy, 'doc', 'ele geçirildi');
+    expect((await getMediaText(primary, 'doc'))?.caption).toBe('Beyanname');
+
+    const index = await loadCaptionIndex(primary);
+    expect(index.get('doc')).toBe('Beyanname');
+    expect((await loadCaptionIndex(decoy)).size).toBe(0);
+  });
+
+  it('writes a padded blob even when there is no caption', async () => {
+    // NULL versus blob would be a free "this item has a caption" bit.
+    await insertMediaItem(primary, media('plain'));
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ caption_enc: Uint8Array | null }>(
+      'SELECT caption_enc FROM media_items WHERE id = ?',
+      'plain',
+    );
+    expect(row?.caption_enc).not.toBeNull();
+    expect(row!.caption_enc!.length).toBe(28 + 64);
+  });
+
+  it('treats a pre-v3 row with no caption column as empty, not broken', async () => {
+    const db = await getDb();
+    await db.runAsync(
+      `INSERT INTO media_items (id, type, file_name, thumb_name, mime, size_bytes, width, height, duration_ms, created_at, vault_tag)
+       VALUES ('legacy', 'photo', 'legacy.enc', NULL, 'image/jpeg', 1, NULL, NULL, NULL, 1, ?)`,
+      tagFor(primary, 'legacy'),
+    );
+
+    expect(await getMediaText(primary, 'legacy')).toEqual({ caption: '', originalName: '' });
   });
 });

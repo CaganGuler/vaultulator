@@ -10,7 +10,13 @@ import { ThumbTile } from '@/components/thumb-tile';
 import { useMediaItems } from '@/hooks/use-media-items';
 import { deleteMediaItem, type MediaItem } from '@/lib/db/media-repo';
 import { applyGalleryOrder, type MediaFilter, serializeOrder } from '@/lib/media/gallery-order';
-import { importAssets, type ImportProgress, pickFromLibrary } from '@/lib/media/import';
+import {
+  importAssets,
+  importDocuments,
+  type ImportProgress,
+  pickDocuments,
+  pickFromLibrary,
+} from '@/lib/media/import';
 import { requireCtx, SessionChangedError, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
 
@@ -21,6 +27,7 @@ const FILTERS: { key: MediaFilter; label: string }[] = [
   { key: 'all', label: 'Tümü' },
   { key: 'photo', label: 'Fotoğraf' },
   { key: 'video', label: 'Video' },
+  { key: 'document', label: 'Belge' },
 ];
 
 export default function GalleryScreen() {
@@ -48,24 +55,37 @@ export default function GalleryScreen() {
     });
   };
 
-  const runImport = () => {
+  const runImport = (source: 'media' | 'documents') => {
     void (async () => {
-      const assets = await pickFromLibrary();
-      if (assets.length === 0) return;
+      // Pick first, outside the busy marker: the picker is a system UI and the
+      // user may sit in it for a while.
+      const media = source === 'media' ? await pickFromLibrary() : [];
+      const documents = source === 'documents' ? await pickDocuments() : [];
+      const total = media.length + documents.length;
+      if (total === 0) return;
 
       // Encryption holds the session context across the whole batch, so the
       // idle timer must not lock and zeroize it mid-write.
       const release = useSession.getState().beginBusy();
-      setImporting({ current: 1, total: assets.length });
+      setImporting({ current: 1, total });
       try {
-        const { failed } = await importAssets(requireCtx(), assets, setImporting);
+        const ctx = requireCtx();
+        const { failed } =
+          source === 'media'
+            ? await importAssets(ctx, media, setImporting)
+            : await importDocuments(ctx, documents, setImporting);
         await refresh();
         if (failed > 0) {
-          Alert.alert('Kısmen alındı', `${assets.length - failed} öğe alındı, ${failed} tanesi alınamadı.`);
-        } else {
+          Alert.alert('Kısmen alındı', `${total - failed} öğe alındı, ${failed} tanesi alınamadı.`);
+        } else if (source === 'media') {
           Alert.alert(
             'Alındı',
             'Seçtiklerin kasaya kopyalandı. Orijinalleri galeriden silmedik — uygulamanın galeriye erişimi yok. Gizli kalmalarını istiyorsan onları galeriden kendin sil.',
+          );
+        } else {
+          Alert.alert(
+            'Alındı',
+            'Belgeler kasaya kopyalandı. Orijinaller bulundukları yerde duruyor; gizli kalmalarını istiyorsan onları kendin sil.',
           );
         }
       } catch (e) {
@@ -205,7 +225,15 @@ export default function GalleryScreen() {
         <View style={styles.fabColumn}>
           <Pressable
             style={[styles.fab, styles.fabSecondary]}
-            onPress={runImport}
+            onPress={() => runImport('documents')}
+            accessibilityRole="button"
+            accessibilityLabel="Belge al"
+          >
+            <Ionicons name="document-outline" size={22} color={colors.text} />
+          </Pressable>
+          <Pressable
+            style={[styles.fab, styles.fabSecondary]}
+            onPress={() => runImport('media')}
             accessibilityRole="button"
             accessibilityLabel="Galeriden içeri al"
           >

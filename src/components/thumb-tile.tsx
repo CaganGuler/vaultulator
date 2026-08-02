@@ -17,7 +17,7 @@ interface ThumbTileProps {
 
 export function ThumbTile({ item, size, onPress, onLongPress, selecting, selected }: ThumbTileProps) {
   const uri = useThumbnail(item);
-  const kind = item.type === 'video' ? 'Video' : 'Fotoğraf';
+  const kind = item.type === 'video' ? 'Video' : item.type === 'document' ? 'Belge' : 'Fotoğraf';
   return (
     <Pressable
       onPress={onPress}
@@ -28,7 +28,14 @@ export function ThumbTile({ item, size, onPress, onLongPress, selecting, selecte
       accessibilityLabel={`${kind}, ${formatDate(item.createdAt)}`}
     >
       {/* Decrypted plaintext below: memory-only, never persisted (invariant #2). */}
-      {uri ? (
+      {item.type === 'document' ? (
+        // Documents have no thumbnail: rendering a PDF's first page needs a
+        // native rasteriser, and putting secret content through one to make a
+        // preview is not a trade worth taking.
+        <View style={styles.documentTile}>
+          <Ionicons name="document-text-outline" size={Math.min(36, size / 3)} color={colors.textDim} />
+        </View>
+      ) : uri ? (
         <Image
           source={{ uri }}
           style={StyleSheet.absoluteFill}
@@ -56,6 +63,7 @@ export function ThumbTile({ item, size, onPress, onLongPress, selecting, selecte
 const styles = StyleSheet.create({
   tile: { backgroundColor: colors.surface, overflow: 'hidden', borderRadius: 4 },
   tileSelected: { opacity: 0.6 },
+  documentTile: { flex: 1, backgroundColor: colors.surfaceAlt, alignItems: 'center', justifyContent: 'center' },
   check: {
     position: 'absolute',
     right: 6,

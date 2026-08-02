@@ -37,12 +37,29 @@ export default function GalleryScreen() {
           numColumns={COLUMNS}
           columnWrapperStyle={{ gap: GAP }}
           contentContainerStyle={{ gap: GAP, paddingBottom: 96 }}
+          // Every tile is the same known size, so the list never has to measure
+          // one. Without this a few thousand items make scrolling stutter, and
+          // each offscreen tile that mounts decrypts a thumbnail it will not
+          // show — real work, not just layout.
+          getItemLayout={(_, index) => {
+            const row = Math.floor(index / COLUMNS);
+            return { length: tileSize + GAP, offset: (tileSize + GAP) * row, index };
+          }}
+          initialNumToRender={COLUMNS * 6}
+          maxToRenderPerBatch={COLUMNS * 4}
+          windowSize={5}
+          removeClippedSubviews
           renderItem={({ item }) => (
             <ThumbTile item={item} size={tileSize} onPress={() => router.push(`/media/${item.id}`)} />
           )}
         />
       )}
-      <Pressable style={styles.fab} onPress={() => router.push('/camera')}>
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push('/camera')}
+        accessibilityRole="button"
+        accessibilityLabel="Fotoğraf veya video çek"
+      >
         <Ionicons name="camera" size={28} color={colors.bg} />
       </Pressable>
     </SafeAreaView>

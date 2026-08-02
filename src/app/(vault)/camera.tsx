@@ -126,7 +126,13 @@ export default function CameraScreen() {
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} mode={mode} />
       <SafeAreaView style={styles.controls}>
         <View style={styles.topRow}>
-          <Pressable style={styles.iconButton} onPress={() => router.back()} disabled={recording}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => router.back()}
+            disabled={recording}
+            accessibilityRole="button"
+            accessibilityLabel="Kapat"
+          >
             <Ionicons name="close" size={26} color={colors.text} />
           </Pressable>
           {recording && (
@@ -139,6 +145,8 @@ export default function CameraScreen() {
             style={styles.iconButton}
             onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}
             disabled={recording}
+            accessibilityRole="button"
+            accessibilityLabel="Ön/arka kamera değiştir"
           >
             <Ionicons name="camera-reverse-outline" size={26} color={colors.text} />
           </Pressable>
@@ -158,6 +166,10 @@ export default function CameraScreen() {
           <Pressable
             onPress={() => runCapture(mode === 'picture' ? takePhoto : toggleRecording)}
             style={[styles.shutter, mode === 'video' && styles.shutterVideo]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              mode === 'picture' ? 'Fotoğraf çek' : recording ? 'Kaydı durdur' : 'Video kaydını başlat'
+            }
           >
             {mode === 'video' && <View style={[styles.shutterInner, recording && styles.shutterInnerRecording]} />}
           </Pressable>

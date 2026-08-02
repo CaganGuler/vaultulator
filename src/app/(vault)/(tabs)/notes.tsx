@@ -41,7 +41,12 @@ export default function NotesScreen() {
           )}
         />
       )}
-      <Pressable style={styles.fab} onPress={() => router.push('/note/new')}>
+      <Pressable
+        style={styles.fab}
+        onPress={() => router.push('/note/new')}
+        accessibilityRole="button"
+        accessibilityLabel="Yeni not"
+      >
         <Ionicons name="add" size={30} color={colors.bg} />
       </Pressable>
     </SafeAreaView>

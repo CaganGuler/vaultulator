@@ -14,7 +14,7 @@ import { colors } from '../theme';
 export function PrivacyCover({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <View style={styles.cover} pointerEvents="auto">
+    <View style={styles.cover} pointerEvents="auto" accessibilityViewIsModal importantForAccessibility="yes">
       <Calculator interactive={false} />
     </View>
   );

@@ -100,11 +100,21 @@ export default function NoteEditor() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Pressable style={styles.iconButton} onPress={saveAndClose}>
+        <Pressable
+          style={styles.iconButton}
+          onPress={saveAndClose}
+          accessibilityRole="button"
+          accessibilityLabel="Kaydet ve geri dön"
+        >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>{isNew && !noteId ? 'Yeni not' : 'Not'}</Text>
-        <Pressable style={styles.iconButton} onPress={confirmDelete}>
+        <Pressable
+          style={styles.iconButton}
+          onPress={confirmDelete}
+          accessibilityRole="button"
+          accessibilityLabel="Notu sil"
+        >
           <Ionicons name="trash-outline" size={22} color={colors.danger} />
         </Pressable>
       </View>

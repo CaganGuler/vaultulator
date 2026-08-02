@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { MediaItem } from '../lib/db/media-repo';
 import { useThumbnail } from '../hooks/use-thumbnail';
-import { colors } from '../theme';
+import { colors, formatDate } from '../theme';
 
 interface ThumbTileProps {
   item: MediaItem;
@@ -15,7 +15,12 @@ interface ThumbTileProps {
 export function ThumbTile({ item, size, onPress }: ThumbTileProps) {
   const uri = useThumbnail(item);
   return (
-    <Pressable onPress={onPress} style={[styles.tile, { width: size, height: size }]}>
+    <Pressable
+      onPress={onPress}
+      style={[styles.tile, { width: size, height: size }]}
+      accessibilityRole="imagebutton"
+      accessibilityLabel={`${item.type === 'video' ? 'Video' : 'Fotoğraf'}, ${formatDate(item.createdAt)}`}
+    >
       {uri ? (
         <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
       ) : (

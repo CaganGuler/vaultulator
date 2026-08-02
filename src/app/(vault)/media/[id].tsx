@@ -115,7 +115,12 @@ export default function MediaViewer() {
       )}
       <SafeAreaView style={styles.chrome} pointerEvents="box-none">
         <View style={styles.topRow}>
-          <Pressable style={styles.iconButton} onPress={() => router.back()}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Kapat"
+          >
             <Ionicons name="close" size={24} color={colors.text} />
           </Pressable>
           {item && (
@@ -125,10 +130,21 @@ export default function MediaViewer() {
           )}
         </View>
         <View style={styles.bottomRow}>
-          <Pressable style={styles.iconButton} onPress={confirmShare} disabled={decrypting || sharing}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={confirmShare}
+            disabled={decrypting || sharing}
+            accessibilityRole="button"
+            accessibilityLabel="Kasadan dışarı paylaş"
+          >
             <Ionicons name="share-outline" size={24} color={colors.text} />
           </Pressable>
-          <Pressable style={styles.iconButton} onPress={confirmDelete}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={confirmDelete}
+            accessibilityRole="button"
+            accessibilityLabel="Kalıcı olarak sil"
+          >
             <Ionicons name="trash-outline" size={24} color={colors.danger} />
           </Pressable>
         </View>

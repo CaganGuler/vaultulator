@@ -54,7 +54,11 @@
     "prebuild": "expo prebuild",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "lint:fix": "expo lint --fix",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "verify": "npm run typecheck && npm run lint && npm run test:coverage"
   },
   "jest": {
     "preset": "jest-expo",
@@ -66,7 +70,40 @@
       "^expo-secure-store$": "<rootDir>/src/test/secure-store-mock.ts",
       "^expo-file-system$": "<rootDir>/src/test/file-system-mock.ts",
       "^expo-sqlite$": "<rootDir>/src/test/expo-sqlite-node-shim.ts",
-      "^expo-crypto$": "<rootDir>/src/test/expo-crypto-mock.ts"
+      "^expo-crypto$": "<rootDir>/src/test/expo-crypto-mock.ts",
+      "^expo-sharing$": "<rootDir>/src/test/expo-sharing-mock.ts"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.{ts,tsx}",
+      "!src/test/**",
+      "!**/__tests__/**",
+      "!src/app/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 28,
+        "branches": 22,
+        "functions": 25,
+        "lines": 28
+      },
+      "src/lib/crypto/": {
+        "statements": 90,
+        "branches": 75,
+        "functions": 95,
+        "lines": 95
+      },
+      "src/lib/db/": {
+        "statements": 88,
+        "branches": 75,
+        "functions": 85,
+        "lines": 88
+      },
+      "src/stores/": {
+        "statements": 55,
+        "branches": 50,
+        "functions": 55,
+        "lines": 60
+      }
     }
   },
   "private": true

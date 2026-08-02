@@ -19,14 +19,14 @@ import { colors, radius, spacing } from '../theme';
 
 import { PIN_LENGTH } from '../lib/crypto/keys';
 
-type Op = '+' | '−' | '×' | '÷';
+export type Op = '+' | '−' | '×' | '÷';
 
-interface Pending {
+export interface Pending {
   op: Op;
   value: number;
 }
 
-function apply({ op, value }: Pending, operand: number): number {
+export function apply({ op, value }: Pending, operand: number): number {
   switch (op) {
     case '+':
       return value + operand;
@@ -41,16 +41,25 @@ function apply({ op, value }: Pending, operand: number): number {
 
 const MAX_DIGITS = 12;
 
-function format(n: number): string {
+/** Above this, `n * 1e10` exceeds MAX_SAFE_INTEGER and the round-trip adds noise. */
+const SAFE_ROUND_LIMIT = Number.MAX_SAFE_INTEGER / 1e10;
+
+export function format(n: number): string {
   if (!Number.isFinite(n)) return 'Hata';
-  // Trim the float noise 0.1 + 0.2 leaves behind before measuring length.
-  const rounded = Math.round(n * 1e10) / 1e10;
+  // Trim the float noise 0.1 + 0.2 leaves behind — but only where the scaling
+  // is exact. Applied unconditionally it corrupts large integers instead:
+  // 123456789012 came back as 123456789012.00002 and got shown in exponential.
+  const rounded = Math.abs(n) <= SAFE_ROUND_LIMIT ? Math.round(n * 1e10) / 1e10 : n;
   const plain = String(rounded);
   return plain.replace('-', '').replace('.', '').length > MAX_DIGITS ? rounded.toExponential(6) : plain;
 }
 
-/** A bare, unsigned 6-digit entry — the only thing treated as a PIN. */
-function isPinEntry(display: string, pending: Pending | null): boolean {
+/**
+ * A bare, unsigned PIN_LENGTH-digit entry — the only thing treated as a PIN.
+ * This is a security boundary: it decides which keystrokes get checked against
+ * the vault, so it is exported to be tested directly.
+ */
+export function isPinEntry(display: string, pending: Pending | null): boolean {
   return pending === null && new RegExp(`^\\d{${PIN_LENGTH}}$`).test(display);
 }
 

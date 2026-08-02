@@ -3,11 +3,11 @@ import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/button';
-import { ProgressOverlay } from '@/components/progress-overlay';
+import type { MediaItem } from '@/lib/db/media-repo';
 import { ingestCapturedPhoto, ingestCapturedVideo } from '@/lib/media/capture';
 import { requireCtx, SessionChangedError, useSession } from '@/stores/session';
 import { colors, radius, spacing } from '@/theme';
@@ -24,6 +24,8 @@ export default function CameraScreen() {
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
+  const [lastShot, setLastShot] = useState<MediaItem | null>(null);
+  const [shotCount, setShotCount] = useState(0);
 
   useEffect(() => {
     if (!recording) return;
@@ -51,12 +53,15 @@ export default function CameraScreen() {
    * before committing, so the worst case is a clean abort rather than an item
    * that silently belongs to no vault.
    */
-  const runIngest = async (work: (ctx: ReturnType<typeof requireCtx>) => Promise<void>) => {
+  const runIngest = async (work: (ctx: ReturnType<typeof requireCtx>) => Promise<MediaItem>) => {
     const release = useSession.getState().beginBusy();
     setSaving(true);
     try {
-      await work(requireCtx());
-      router.back();
+      // The camera deliberately stays open. It used to close after every
+      // single shot, so taking ten photos meant ten round trips through the
+      // gallery. The user leaves with the close button.
+      setLastShot(await work(requireCtx()));
+      setShotCount((n) => n + 1);
     } finally {
       release();
       setSaving(false);
@@ -70,9 +75,9 @@ export default function CameraScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const photo = await camera.takePictureAsync({ exif: false });
     setProgress(null);
-    await runIngest(async (ctx) => {
-      await ingestCapturedPhoto({ ctx, sourceUri: photo.uri, width: photo.width, height: photo.height });
-    });
+    await runIngest((ctx) =>
+      ingestCapturedPhoto({ ctx, sourceUri: photo.uri, width: photo.width, height: photo.height }),
+    );
   };
 
   const toggleRecording = async () => {
@@ -98,13 +103,13 @@ export default function CameraScreen() {
     if (!video?.uri) return;
     setProgress(0);
     const uri = video.uri;
-    await runIngest(async (ctx) => {
-      await ingestCapturedVideo({
+    await runIngest((ctx) =>
+      ingestCapturedVideo({
         ctx,
         sourceUri: uri,
         onProgress: (p) => setProgress(p.totalBytes > 0 ? p.processedBytes / p.totalBytes : null),
-      });
-    });
+      }),
+    );
   };
 
   /** Nothing below may reject silently — a lost capture must be visible. */
@@ -151,6 +156,14 @@ export default function CameraScreen() {
             <Ionicons name="camera-reverse-outline" size={26} color={colors.text} />
           </Pressable>
         </View>
+        {shotCount > 0 && !recording && (
+          <View style={styles.shotBadge} pointerEvents="none">
+            <Ionicons name="checkmark-circle" size={16} color={colors.accent} />
+            <Text style={styles.shotText}>
+              {shotCount} {lastShot?.type === 'video' ? 'video' : 'öğe'} kasaya eklendi
+            </Text>
+          </View>
+        )}
         <View style={styles.bottomArea}>
           {!recording && (
             <View style={styles.modeRow}>
@@ -175,11 +188,14 @@ export default function CameraScreen() {
           </Pressable>
         </View>
       </SafeAreaView>
-      <ProgressOverlay
-        visible={saving}
-        label={mode === 'picture' ? 'Fotoğraf şifreleniyor…' : 'Video şifreleniyor…'}
-        progress={progress}
-      />
+      {saving && (
+        <View style={styles.savingPill} pointerEvents="none">
+          <ActivityIndicator color={colors.text} size="small" />
+          <Text style={styles.savingText}>
+            {progress != null ? `Şifreleniyor %${Math.round(progress * 100)}` : 'Şifreleniyor…'}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -195,6 +211,30 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   permissionText: { color: colors.textDim, fontSize: 15, textAlign: 'center', lineHeight: 22 },
+  shotBadge: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  shotText: { color: colors.text, fontSize: 13 },
+  savingPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 140,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  savingText: { color: colors.text, fontSize: 13 },
   controls: { flex: 1, justifyContent: 'space-between' },
   topRow: {
     flexDirection: 'row',

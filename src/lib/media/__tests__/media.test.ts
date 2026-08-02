@@ -6,12 +6,13 @@
  * invariant #2 says is the only place plaintext may exist, and only briefly.
  */
 import { File } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import { encryptBytesToFile } from '../../crypto/stream';
 import { randomBytes } from '../../crypto/primitives';
 import type { MediaItem } from '../../db/media-repo';
 import { decryptedFileUri, ensureVaultDirs, mediaFileUri, thumbFileUri } from '../../paths';
-import { shareMediaItem } from '../share';
+import { canShareOut, shareMediaItem } from '../share';
 import {
   clearThumbCache,
   decryptVideoToTemp,
@@ -142,5 +143,25 @@ describe('viewer cache', () => {
 
     deleteDecryptedTemp(tempUri);
     expect(new File(tempUri).exists).toBe(false);
+  });
+});
+
+describe('platform gating', () => {
+  it('refuses to share out on Android', async () => {
+    const original = Platform.OS;
+    Platform.OS = 'android'; // readonly by convention, writable at runtime
+    try {
+      expect(canShareOut()).toBe(false);
+      // Not merely hidden in the UI: the function itself refuses, so nothing
+      // can decrypt a file the impending lock is about to delete.
+      await expect(shareMediaItem(dek, item('a'))).rejects.toThrow();
+      expect(new File(decryptedFileUri('export-a.jpg')).exists).toBe(false);
+    } finally {
+      Platform.OS = original;
+    }
+  });
+
+  it('allows it on iOS', () => {
+    expect(canShareOut()).toBe(true);
   });
 });

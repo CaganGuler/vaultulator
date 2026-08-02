@@ -1,16 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useEventListener } from 'expo';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ProgressOverlay } from '@/components/progress-overlay';
 import { deleteMediaItem, getMediaItem, type MediaItem } from '@/lib/db/media-repo';
-import { shareMediaItem } from '@/lib/media/share';
+import { canShareOut, shareMediaItem } from '@/lib/media/share';
 import { decryptVideoToTemp, deleteDecryptedTemp, getPhotoDataUri } from '@/lib/media/viewer-cache';
-import { requireCtx } from '@/stores/session';
+import { requireCtx, useSession } from '@/stores/session';
 import { colors, formatBytes, formatDate, radius, spacing } from '@/theme';
 
 export default function MediaViewer() {
@@ -135,15 +137,17 @@ export default function MediaViewer() {
           )}
         </View>
         <View style={styles.bottomRow}>
-          <Pressable
-            style={styles.iconButton}
-            onPress={confirmShare}
-            disabled={decrypting || sharing}
-            accessibilityRole="button"
-            accessibilityLabel="Kasadan dışarı paylaş"
-          >
-            <Ionicons name="share-outline" size={24} color={colors.text} />
-          </Pressable>
+          {canShareOut() && (
+            <Pressable
+              style={styles.iconButton}
+              onPress={confirmShare}
+              disabled={decrypting || sharing}
+              accessibilityRole="button"
+              accessibilityLabel="Kasadan dışarı paylaş"
+            >
+              <Ionicons name="share-outline" size={24} color={colors.text} />
+            </Pressable>
+          )}
           <Pressable
             style={styles.iconButton}
             onPress={confirmDelete}
@@ -164,11 +168,43 @@ export default function MediaViewer() {
   );
 }
 
+/**
+ * Watching a video produces no touch events, and without keep-awake the screen
+ * sleeps, which backgrounds the app and — with the default "lock immediately"
+ * setting — locks the vault mid-playback. Both halves need fixing.
+ *
+ * `busy` is held only while the video is actually playing, never for as long as
+ * the viewer happens to be open: that would turn the screen into an unbounded
+ * way to stop the vault ever locking.
+ */
 function VideoPlayerView({ uri }: { uri: string }) {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
     p.play();
   });
+
+  useKeepAwake();
+
+  const release = useRef<(() => void) | null>(null);
+  useEventListener(player, 'playingChange', ({ isPlaying }) => {
+    if (isPlaying) {
+      release.current ??= useSession.getState().beginBusy();
+      return;
+    }
+    release.current?.();
+    release.current = null;
+  });
+
+  // A leaked releaser means the vault never idle-locks again — a security
+  // regression, not a glitch. Release unconditionally on unmount.
+  useEffect(
+    () => () => {
+      release.current?.();
+      release.current = null;
+    },
+    [],
+  );
+
   return <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" nativeControls />;
 }
 

@@ -50,6 +50,14 @@ export default function NoteEditor() {
   // swipe, the idle lock (typing produces no touch events on the root
   // responder), a shake or a screenshot all unmounted the editor and threw the
   // draft away. Keep the latest values in a ref so the unmount save sees them.
+  // Typing generates no touch events on the vault's root responder, so a long
+  // note used to trip the idle lock. Autosave rescued the text but the user
+  // was still ejected mid-sentence.
+  useEffect(() => {
+    const release = useSession.getState().beginBusy();
+    return release;
+  }, []);
+
   const latest = useRef({ title, body, noteId });
   useEffect(() => {
     latest.current = { title, body, noteId };

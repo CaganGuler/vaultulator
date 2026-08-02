@@ -204,6 +204,12 @@ taşınırsa doğrulama tutmaz.
   verisi içermez. FLAG_SECURE vault rotalarında aktif.
 - **iOS:** `com.apple.developer.default-data-protection = NSFileProtectionComplete`
   entitlement'ı; Keychain girdileri `WHEN_UNLOCKED_THIS_DEVICE_ONLY`.
+- **Kasadan dışarı paylaşma yalnızca iOS'ta.** Android'de sistem seçicisi ayrı bir
+  activity; uygulama arka plana düşüyor, kasa kilitleniyor (varsayılan ayar "Hemen") ve
+  `wipeDecryptedDir()` tam da alıcı uygulamanın okumak üzere olduğu düz dosyayı siliyor.
+  Alternatif — paylaşım uçarken kilidi ertelemek — kasayı bir uygulama geçişi boyunca açık
+  tutmak demekti; oysa tam o an kapanması gereken an. Özelliği yarım bırakmayı, güvenlik
+  özelliğini delmeye tercih ettik.
 - **Görüntü önbelleği bellekte tutulur.** `expo-image`'ın `cachePolicy` varsayılanı
   `'disk'` ve bu, çözülmüş küçük resimlerle fotoğrafların SDWebImage (iOS) / Glide
   (Android) önbelleklerine — yani `<cache>/decrypted/` **dışına**, kilitte ve açılışta
